@@ -42,4 +42,8 @@ if (dev) {
 } else {
   await context.rebuild();
   await context.dispose();
+
+  // Copy styles.css to root (Obsidian loads this separately for global styles)
+  copyFileSync("src/styles.css", "styles.css");
+  console.log("Copied styles.css to root");
 }

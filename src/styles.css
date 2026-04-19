@@ -1,0 +1,44 @@
+/* Obsidian Copilot — Terminal Styles */
+
+.copilot-terminal-container {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--background-primary);
+}
+
+.copilot-terminal-wrapper {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Ensure xterm fills its container */
+.copilot-terminal-wrapper .xterm {
+  height: 100%;
+  width: 100%;
+}
+
+.copilot-terminal-wrapper .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* Scrollbar adapts to theme */
+.copilot-terminal-wrapper .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.copilot-terminal-wrapper .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.copilot-terminal-wrapper .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+.copilot-terminal-wrapper .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--background-modifier-border-hover);
+}

@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          # Release includes: main.js, manifest.json, styles.css, pty-relay.js, setup.js
+          $files = @("main.js", "manifest.json", "styles.css", "src/pty-relay.js", "setup.js")
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) {
+              Write-Error "Missing required file: $f"
+              exit 1
+            }
+          }
+          # Copy pty-relay.js to root for easier access in the release
+          Copy-Item "src/pty-relay.js" "pty-relay.js"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            main.js
+            manifest.json
+            styles.css
+            pty-relay.js
+            setup.js
+          generate_release_notes: true

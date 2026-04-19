@@ -1,82 +1,103 @@
 # Obsidian Copilot
 
-A minimal Obsidian plugin that embeds the **GitHub Copilot CLI** in a terminal panel, powered by [xterm.js](https://xtermjs.org/) and [node-pty](https://github.com/microsoft/node-pty).
+A plugin that embeds the **GitHub Copilot CLI** as a fully interactive terminal inside Obsidian, with automatic file context injection.
+
+> ⚠️ **Windows only** for now (ConPTY + node-pty prebuilds).
 
 ## Features
 
-- 🤖 **One-click Copilot** — Opens the Copilot CLI directly in a right sidebar panel
-- 📐 **Proper resize** — Terminal redraws correctly when you resize or move the panel (real PTY via node-pty)
-- 🎨 **WebGL rendering** — GPU-accelerated terminal rendering with canvas fallback
-- 🔗 **Clickable links** — URLs in the terminal output are clickable
-- ♻️ **Restart** — Press any key after Copilot exits, or use the "Restart Copilot" command
-- 📂 **Vault context** — Copilot starts in your vault root directory
+- 🤖 **One-click Copilot** — Opens the Copilot CLI directly in any pane (sidebar, tab, split, bottom)
+- 📂 **Auto file context** — Automatically prepends `@active-file` to your messages so Copilot knows what you're looking at
+- ✂️ **Selection awareness** — If you have text selected, includes line numbers in the context
+- 🎨 **Theme sync** — Terminal colors match your Obsidian theme (light/dark, custom themes) and update live
+- 📐 **Proper resize** — Real PTY via node-pty relay, correct reflow on resize
+- 🔗 **Clickable links** — URLs in terminal output are clickable
+- ⚙️ **Configurable** — CLI flags, placement, working directory, auto-open, context injection toggle
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `Open Copilot` | Open or reveal the Copilot panel in the right sidebar |
-| `Restart Copilot session` | Kill and restart the current Copilot process |
-| `Open Copilot in new pane` | Open a second Copilot instance |
+| Open Copilot | Open in default placement |
+| Open Copilot (right/left/bottom/tab/split) | Open in specific location |
+| Toggle focus | Switch between editor and Copilot |
+| Restart Copilot session | Kill and restart the process |
+| Add current file as context | Manually type `@file` into terminal |
+| Add selection as context | Type `@file` + selection info |
 
 ## Prerequisites
 
-1. **GitHub Copilot CLI** installed and in your PATH
-2. **Node.js** build tools for your platform (needed for node-pty native compilation)
-   - Windows: Visual Studio Build Tools with C++ workload
-   - macOS: Xcode Command Line Tools
-   - Linux: `build-essential` package
+1. **GitHub Copilot CLI** installed and authenticated (`copilot` in PATH)
+2. **Node.js** v18+ in PATH (used to run the PTY relay)
+3. **Windows 10/11** (ConPTY support required)
 
-## Development
+## Installation
 
-```bash
-# Install dependencies
-npm install
+### Via BRAT (recommended)
 
-# Rebuild node-pty for Obsidian's Electron version
-npm run rebuild-pty
+1. Install the [BRAT plugin](https://github.com/TfTHacker/obsidian42-brat)
+2. Add this repo: `sebastienlevert/obsidian-copilot`
+3. Enable the plugin
+4. Run the setup command (see below)
 
-# Build the plugin
-npm run build
+### Manual
 
-# Watch mode for development
-npm run dev
+1. Download the latest release from [Releases](https://github.com/sebastienlevert/obsidian-copilot/releases)
+2. Extract into your vault's `.obsidian/plugins/obsidian-copilot/`
+3. Run the setup script:
+   ```powershell
+   cd .obsidian\plugins\obsidian-copilot
+   node setup.js
+   ```
+4. Enable "Copilot" in Settings → Community Plugins
+
+### Setup Script
+
+The `setup.js` script installs the required `node-pty` native module for your system Node.js:
+
+```powershell
+node setup.js
 ```
 
-## Installation (manual)
+This only needs to run once (or after Node.js major version upgrades).
 
-1. Build the plugin (see above)
-2. Copy these files into your vault's `.obsidian/plugins/obsidian-copilot/`:
-   - `main.js`
-   - `manifest.json`
-   - `styles.css`
-   - `node_modules/node-pty/` (the native module)
-3. Enable "Copilot" in Obsidian's Community Plugins settings
+## Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Default placement | Right sidebar | Where Copilot opens |
+| Auto-open on vault load | On | Open Copilot when Obsidian starts |
+| Copilot CLI flags | `--yolo --banner` | Flags passed to the CLI |
+| Working directory | vault | CWD for the Copilot session |
+| Auto-inject file context | On | Prepend @file to every message |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│  Obsidian                               │
-│  ┌───────────────────────────────────┐  │
-│  │  CopilotView (ItemView)           │  │
-│  │  ┌─────────────────────────────┐  │  │
-│  │  │  xterm.js + FitAddon        │◄─┼──┼── ResizeObserver
-│  │  │  (terminal rendering)       │  │  │
-│  │  └─────────┬───────────────────┘  │  │
-│  │            ↕ data                 │  │
-│  │  ┌─────────┴───────────────────┐  │  │
-│  │  │  node-pty (real PTY)        │  │  │
-│  │  │  ├─ ConPTY (Windows)        │  │  │
-│  │  │  └─ pty.fork (macOS/Linux)  │  │  │
-│  │  └─────────┬───────────────────┘  │  │
-│  └────────────┼──────────────────────┘  │
-└───────────────┼─────────────────────────┘
-                ↕
-        ┌───────┴────────┐
-        │  copilot CLI   │
-        │  (CWD = vault) │
-        └────────────────┘
+┌─────────────────────────────────────────────┐
+│  Obsidian (Electron renderer)               │
+│  ┌───────────────────────────────────────┐  │
+│  │  CopilotView                          │  │
+│  │  ├─ xterm.js (terminal rendering)     │  │
+│  │  ├─ Input interception (context)      │  │
+│  │  └─ child_process.spawn(node relay)   │  │
+│  └───────────────┬───────────────────────┘  │
+└──────────────────┼──────────────────────────┘
+                   ↕ stdin/stdout pipes
+┌──────────────────┼──────────────────────────┐
+│  pty-relay.js (system Node.js process)      │
+│  └─ node-pty → ConPTY → copilot CLI        │
+└─────────────────────────────────────────────┘
+```
+
+The relay pattern is needed because Obsidian's Electron renderer blocks `worker_threads`, which node-pty requires for ConPTY's conout socket draining.
+
+## Development
+
+```bash
+npm install
+npm run build
+# Copy main.js, manifest.json, styles.css, pty-relay.js to plugin folder
 ```
 
 ## License

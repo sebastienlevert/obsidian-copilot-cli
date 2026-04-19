@@ -4,7 +4,6 @@ styles.css
 
 # Node
 node_modules/
-package-lock.json
 
 # Obsidian
 data.json
@@ -18,3 +17,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Setup artifacts
+pty-node-modules/
