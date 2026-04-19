@@ -73,6 +73,25 @@ export class CopilotSettingTab extends PluginSettingTab {
           })
       );
 
+    containerEl.createEl("h2", { text: "Session" });
+
+    new Setting(containerEl)
+      .setName("Persistent session")
+      .setDesc(
+        "Always resume the same Copilot session. A unique session ID is generated on first use and reused on every launch."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.persistentSession)
+          .onChange(async (value) => {
+            this.plugin.settings.persistentSession = value;
+            if (value && !this.plugin.settings.sessionId) {
+              this.plugin.settings.sessionId = require("crypto").randomUUID();
+            }
+            await this.plugin.saveSettings();
+          })
+      );
+
     containerEl.createEl("h2", { text: "Context Injection" });
 
     new Setting(containerEl)

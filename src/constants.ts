@@ -17,6 +17,10 @@ export interface CopilotSettings {
   workingDirectory: string;
   /** Auto-inject active file context on every message */
   autoInjectContext: boolean;
+  /** Always resume the same Copilot session */
+  persistentSession: boolean;
+  /** Auto-generated session UUID (stored on first use) */
+  sessionId: string;
 }
 
 export const DEFAULT_SETTINGS: CopilotSettings = {
@@ -25,4 +29,6 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   copilotFlags: "--yolo --banner",
   workingDirectory: "vault",
   autoInjectContext: true,
+  persistentSession: true,
+  sessionId: "",
 };

@@ -10,6 +10,12 @@ export default class CopilotPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    // Generate a persistent session ID on first use
+    if (this.settings.persistentSession && !this.settings.sessionId) {
+      this.settings.sessionId = require("crypto").randomUUID();
+      await this.saveSettings();
+    }
+
     // Ensure ConPTY bridge binary exists (downloads on first BRAT install)
     try {
       await this.ensureConPtyBridge();

@@ -219,7 +219,10 @@ export class CopilotView extends ItemView {
 
     const settings = this.plugin.settings;
     const cwd = settings.workingDirectory === "vault" ? vaultPath : settings.workingDirectory;
-    const cmd = `copilot ${settings.copilotFlags}`.trim();
+    const resumeFlag = settings.persistentSession && settings.sessionId
+      ? ` --resume=${settings.sessionId}`
+      : "";
+    const cmd = `copilot ${settings.copilotFlags}${resumeFlag}`.trim();
 
     // Build the full shell command for ConPTY
     const shellCmd = `powershell.exe -NoLogo -NoProfile -Command ${cmd}`;
