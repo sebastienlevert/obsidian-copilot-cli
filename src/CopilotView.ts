@@ -19,10 +19,9 @@ export class CopilotView extends ItemView {
   private styleEl: HTMLStyleElement | null = null;
   private restartPending = false;
   private plugin: CopilotPlugin;
-  private inputBuffer = "";  // tracks current line for context injection
-  private lastActiveFile: string | null = null;  // cached active file path
-  private lastSelection: string | null = null;   // cached selection info
-  private activeFileWatcher: any = null;
+  private lastActiveFile: string | null = null;
+  private fileOpenRef: any = null;
+  private leafChangeRef: any = null;
   private themeMutationObserver: MutationObserver | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: CopilotPlugin) {
@@ -97,19 +96,31 @@ export class CopilotView extends ItemView {
     });
     this.resizeObserver.observe(wrapper);
 
-    // Watch active file/selection changes — cache them so they're available
-    // even after focus moves to the terminal
-    this.activeFileWatcher = this.app.workspace.on("active-leaf-change", () => {
-      this.cacheEditorContext();
+    // Watch active file/selection — write to .context file so Copilot
+    // can discover the active file via instructions in AGENTS.md
+
+    // file-open is the most reliable event — Obsidian passes the file directly
+    this.fileOpenRef = this.app.workspace.on("file-open", (file) => {
+      if (file) {
+        this.lastActiveFile = file.path;
+        this.writeContextFile();
+      }
     });
-    // Also watch for selection changes via editor-change event
-    this.registerEvent(
-      this.app.workspace.on("editor-change" as any, () => {
-        this.cacheEditorContext();
-      })
-    );
-    // Initial capture
+    this.registerEvent(this.fileOpenRef);
+
+    // active-leaf-change — update file when switching to a markdown leaf
+    this.leafChangeRef = this.app.workspace.on("active-leaf-change", (leaf) => {
+      if (leaf?.view?.getViewType() === "markdown") {
+        const file = this.app.workspace.getActiveFile();
+        if (file) this.lastActiveFile = file.path;
+        this.writeContextFile();
+      }
+    });
+    this.registerEvent(this.leafChangeRef);
+
+    // Initial context write
     this.cacheEditorContext();
+    this.writeContextFile();
   }
 
   /** Build xterm theme from Obsidian's CSS variables — adapts to any theme */
@@ -149,26 +160,36 @@ export class CopilotView extends ItemView {
     };
   }
 
-  /** Cache the active file and selection so they persist when focus moves to terminal */
+  /** Cache the active file */
   private cacheEditorContext(): void {
     const file = this.app.workspace.getActiveFile();
-    // Only update if we're looking at a real file (not the terminal itself)
     if (file) {
       this.lastActiveFile = file.path;
-      // Cache selection
-      const editor = this.app.workspace.activeEditor?.editor;
-      if (editor) {
-        const selection = editor.getSelection();
-        if (selection && selection.length > 0) {
-          const cursor = editor.getCursor("from");
-          const cursorTo = editor.getCursor("to");
-          this.lastSelection = `(lines ${cursor.line + 1}-${cursorTo.line + 1})`;
-        } else {
-          this.lastSelection = null;
-        }
-      } else {
-        this.lastSelection = null;
-      }
+    }
+  }
+
+  /**
+   * Write the current context to a .context file in the plugin folder.
+   * Copilot reads this via instructions in AGENTS.md — no readline manipulation needed.
+   */
+  private writeContextFile(): void {
+    if (!this.plugin.settings.autoInjectContext) return;
+
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const vaultPath = (this.app.vault.adapter as any).basePath as string;
+    const contextPath = path.join(vaultPath, ".obsidian", "plugins", "obsidian-copilot", ".context");
+
+    const lines: string[] = [];
+    if (this.lastActiveFile) {
+      lines.push(`PENSIEVE_ACTIVE_FILE=${this.lastActiveFile}`);
+    }
+    lines.push(`PENSIEVE_UPDATED=${new Date().toISOString()}`);
+
+    try {
+      fs.writeFileSync(contextPath, lines.join("\n") + "\n", "utf-8");
+    } catch {
+      // Silently ignore write errors (plugin dir may not exist yet)
     }
   }
 
@@ -211,7 +232,12 @@ export class CopilotView extends ItemView {
         shellCmd,
       ], {
         cwd: cwd,
-        env: { ...process.env as Record<string, string>, TERM: "xterm-256color", COLORTERM: "truecolor" },
+        env: {
+          ...process.env as Record<string, string>,
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          PENSIEVE_ACTIVE_FILE: this.lastActiveFile || "",
+        },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -226,14 +252,14 @@ export class CopilotView extends ItemView {
         this.terminal?.write(data.toString("utf-8"));
       });
 
-      // xterm input -> relay stdin (with optional context injection on Enter)
+      // xterm input -> PTY stdin (simple passthrough — context is via .context file)
       this.terminal.onData((data: string) => {
         if (this.restartPending) {
           this.restartPending = false;
           this.restart();
           return;
         }
-        this.handleInput(data);
+        this.childProc?.stdin?.write(data);
       });
 
       // Handle process exit
@@ -263,104 +289,6 @@ export class CopilotView extends ItemView {
   /** Send text input to the PTY (used by commands like "send file context") */
   sendInput(text: string): void {
     this.childProc?.stdin?.write(text);
-  }
-
-  /**
-   * Handle terminal input with context injection.
-   * When auto-inject is on: buffers input locally, echoes to xterm directly,
-   * and on Enter sends the full line with @file prefix to the PTY.
-   */
-  private handleInput(data: string): void {
-    // If context injection is disabled, pass through directly
-    if (!this.plugin.settings.autoInjectContext) {
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    // Handle special keys
-    if (data === "\r" || data === "\n") {
-      // Enter pressed — send with context prefix if there's input
-      if (this.inputBuffer.trim().length > 0) {
-        this.injectContextAndSend();
-      } else {
-        // Empty line — just forward Enter
-        this.childProc?.stdin?.write("\r");
-      }
-      this.inputBuffer = "";
-      return;
-    }
-
-    if (data === "\x7f" || data === "\b") {
-      // Backspace — remove last char from buffer
-      if (this.inputBuffer.length > 0) {
-        this.inputBuffer = this.inputBuffer.slice(0, -1);
-      }
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    if (data === "\x15") {
-      // Ctrl+U — clear line
-      this.inputBuffer = "";
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    if (data === "\x17") {
-      // Ctrl+W — delete word
-      this.inputBuffer = this.inputBuffer.replace(/\S+\s*$/, "");
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    if (data === "\x03") {
-      // Ctrl+C — reset buffer
-      this.inputBuffer = "";
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    // Control sequences (arrows, escape, etc.) — pass through without buffering
-    if (data.length > 1 && data[0] === "\x1b") {
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    if (data.charCodeAt(0) < 32 && data !== "\t") {
-      // Other control chars — pass through
-      this.childProc?.stdin?.write(data);
-      return;
-    }
-
-    // Regular character(s) — buffer and forward
-    this.inputBuffer += data;
-    this.childProc?.stdin?.write(data);
-  }
-
-  /**
-   * Send user's message with @file prefix prepended.
-   * Kills the current line (Ctrl+U) and re-sends as one atomic message.
-   * Uses cached selection since focus moves to terminal before Enter.
-   */
-  private injectContextAndSend(): void {
-    const file = this.lastActiveFile;
-    if (!file) {
-      // No active file — just send Enter normally
-      this.childProc?.stdin?.write("\r");
-      return;
-    }
-
-    // Build context prefix
-    let contextPrefix = `@${file} `;
-
-    // Use cached selection (captured before focus moved to terminal)
-    if (this.lastSelection) {
-      contextPrefix += `${this.lastSelection} `;
-    }
-
-    // Single atomic write: Ctrl+U (kill line) + full replacement + Enter
-    const fullMessage = "\x15" + contextPrefix + this.inputBuffer + "\r";
-    this.childProc?.stdin?.write(fullMessage);
   }
 
   /** Focus the xterm terminal element */
@@ -393,9 +321,6 @@ export class CopilotView extends ItemView {
     this.killProcess();
     this.resizeObserver?.disconnect();
     this.themeMutationObserver?.disconnect();
-    if (this.activeFileWatcher) {
-      this.app.workspace.offref(this.activeFileWatcher);
-    }
     this.terminal?.dispose();
     this.styleEl?.remove();
     this.terminal = null;

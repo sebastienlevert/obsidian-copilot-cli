@@ -78,8 +78,8 @@ export class CopilotSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Auto-inject file context")
       .setDesc(
-        "Automatically prepend @active-file to your messages so Copilot knows which file you're viewing. " +
-        "If text is selected, also includes line numbers."
+        "Write the active file path and selection to a .context file that Copilot can read. " +
+        "AGENTS.md instructions tell Copilot to check this file for context."
       )
       .addToggle((toggle) =>
         toggle
