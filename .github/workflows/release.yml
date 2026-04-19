@@ -18,21 +18,20 @@ jobs:
         with:
           node-version: "22"
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build ConPTY bridge
+        shell: pwsh
+        run: |
+          Set-Location conpty-bridge
+          cargo build --release
+          Write-Host "Binary size: $((Get-Item target/release/conpty-bridge.exe).Length / 1KB) KB"
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build plugin
         run: npm run build
-
-      - name: Install node-pty for bundling
-        shell: pwsh
-        run: |
-          # Install node-pty — CI's Node 22 compiles for ABI 127
-          New-Item -ItemType Directory -Path "dist" -Force
-          Set-Location dist
-          npm init -y | Out-Null
-          npm install node-pty@^1.0.0
-          Set-Location ..
 
       - name: Package release
         shell: pwsh
@@ -44,16 +43,12 @@ jobs:
           Copy-Item "main.js" "$out/"
           Copy-Item "manifest.json" "$out/"
           Copy-Item "styles.css" "$out/"
-          Copy-Item "src/pty-relay.js" "$out/pty-relay.js"
 
-          # Bundle node-pty with compiled binaries for Node 22 (current LTS)
-          Copy-Item "dist/node_modules/node-pty" "$out/node_modules/node-pty" -Recurse
+          # ConPTY bridge binary (~400KB, no ABI issues)
+          Copy-Item "conpty-bridge/target/release/conpty-bridge.exe" "$out/"
 
-          # Create zip
+          # Create zip for manual install
           Compress-Archive -Path "$out/*" -DestinationPath "obsidian-copilot.zip" -Force
-
-          # Also output individual files for BRAT compatibility
-          Copy-Item "$out/main.js" "release-main.js"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

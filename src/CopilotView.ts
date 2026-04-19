@@ -178,15 +178,15 @@ export class CopilotView extends ItemView {
     try {
       this.fitAddon.fit();
       if (this.childProc?.stdin?.writable) {
-        const msg = JSON.stringify({ resize: [this.terminal.cols, this.terminal.rows] });
-        this.childProc.stdin.write(msg + "\n");
+        // ConPTY bridge resize protocol: escape sequence parsed by the Rust binary
+        this.childProc.stdin.write(`\x1b]resize;${this.terminal.cols};${this.terminal.rows}\x07`);
       }
     } catch {
       // Ignore transient resize errors during teardown
     }
   }
 
-  /** Spawn the Copilot CLI via a PTY relay running in system Node */
+  /** Spawn the Copilot CLI via the ConPTY bridge (no node-pty needed) */
   private spawnCopilot(): void {
     if (!this.terminal) return;
 
@@ -194,26 +194,24 @@ export class CopilotView extends ItemView {
     const path = require("path") as typeof import("path");
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
     const pluginDir = path.join(vaultPath, ".obsidian", "plugins", "obsidian-copilot");
-    const relayScript = path.join(pluginDir, "pty-relay.js");
+    const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
 
     const settings = this.plugin.settings;
     const cwd = settings.workingDirectory === "vault" ? vaultPath : settings.workingDirectory;
     const cmd = `copilot ${settings.copilotFlags}`.trim();
 
-    // Build environment
-    const env: Record<string, string> = {
-      ...process.env as Record<string, string>,
-      COLUMNS: String(this.terminal.cols),
-      LINES: String(this.terminal.rows),
-      COPILOT_CWD: cwd,
-      COPILOT_CMD: cmd,
-      NODE_PATH: path.join(pluginDir, "node_modules"),
-    };
+    // Build the full shell command for ConPTY
+    const shellCmd = `powershell.exe -NoLogo -NoProfile -Command ${cmd}`;
 
     try {
-      this.childProc = spawn("node", [relayScript], {
+      this.childProc = spawn(bridgePath, [
+        String(this.terminal.cols),
+        String(this.terminal.rows),
+        cwd,
+        shellCmd,
+      ], {
         cwd: cwd,
-        env,
+        env: { ...process.env as Record<string, string>, TERM: "xterm-256color", COLORTERM: "truecolor" },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -256,7 +254,7 @@ export class CopilotView extends ItemView {
       this.terminal.write(
         "\x1b[90mTroubleshooting:\r\n" +
           "  1. Ensure GitHub Copilot CLI is installed (copilot in PATH)\r\n" +
-          "  2. Ensure Node.js is in PATH\r\n" +
+          "  2. Ensure conpty-bridge.exe exists in the plugin folder\r\n" +
           "  3. Restart Obsidian after making changes\x1b[0m\r\n"
       );
     }
