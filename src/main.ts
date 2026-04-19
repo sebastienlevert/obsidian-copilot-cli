@@ -11,7 +11,11 @@ export default class CopilotPlugin extends Plugin {
     await this.loadSettings();
 
     // Ensure ConPTY bridge binary exists (downloads on first BRAT install)
-    await this.ensureConPtyBridge();
+    try {
+      await this.ensureConPtyBridge();
+    } catch (e) {
+      console.error("Copilot CLI: ensureConPtyBridge failed", e);
+    }
 
     // Register custom Copilot icon
     addIcon(ICON_COPILOT, COPILOT_ICON_SVG);
@@ -176,24 +180,23 @@ export default class CopilotPlugin extends Plugin {
 
   /** Download conpty-bridge.exe from GitHub release if missing (BRAT installs) */
   private async ensureConPtyBridge(): Promise<void> {
-    const path = require("path") as typeof import("path");
-    const fs = require("fs") as typeof import("fs");
-    const vaultPath = (this.app.vault.adapter as any).basePath as string;
-    const pluginDir = path.join(vaultPath, this.app.vault.configDir, "plugins", this.manifest.id);
-    const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
-
-    if (fs.existsSync(bridgePath)) return;
-
-    const url = `https://github.com/sebastienlevert/obsidian-copilot-cli/releases/latest/download/conpty-bridge.exe`;
     try {
+      const path = require("path") as typeof import("path");
+      const fs = require("fs") as typeof import("fs");
+      const vaultPath = (this.app.vault.adapter as any).basePath as string;
+      const pluginDir = path.join(vaultPath, this.app.vault.configDir, "plugins", this.manifest.id);
+      const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
+
+      if (fs.existsSync(bridgePath)) return;
+
+      const url = `https://github.com/sebastienlevert/obsidian-copilot-cli/releases/latest/download/conpty-bridge.exe`;
       new Notice("Copilot CLI: Downloading ConPTY bridge...");
       const response = await requestUrl({ url });
       fs.mkdirSync(pluginDir, { recursive: true });
       fs.writeFileSync(bridgePath, Buffer.from(response.arrayBuffer));
       new Notice("Copilot CLI: ConPTY bridge ready.");
     } catch (e) {
-      new Notice("Copilot CLI: Failed to download conpty-bridge.exe. See console for details.");
-      console.error("Copilot CLI: bridge download failed", e);
+      console.error("Copilot CLI: ensureConPtyBridge failed", e);
     }
   }
 
