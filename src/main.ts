@@ -1,22 +1,41 @@
-import { Plugin } from "obsidian";
+import { Plugin, addIcon } from "obsidian";
 import { CopilotView } from "./CopilotView";
-import { VIEW_TYPE_COPILOT, ICON_COPILOT } from "./constants";
+import { CopilotSettingTab } from "./CopilotSettingTab";
+import { VIEW_TYPE_COPILOT, ICON_COPILOT, COPILOT_ICON_SVG, DEFAULT_SETTINGS } from "./constants";
+import type { CopilotSettings, Placement } from "./constants";
 
 export default class CopilotPlugin extends Plugin {
-  async onload(): Promise<void> {
-    // Register the Copilot terminal view
-    this.registerView(VIEW_TYPE_COPILOT, (leaf) => new CopilotView(leaf));
+  settings: CopilotSettings = { ...DEFAULT_SETTINGS };
 
-    // Ribbon icon — opens the Copilot panel
+  async onload(): Promise<void> {
+    await this.loadSettings();
+
+    // Register custom Copilot icon
+    addIcon(ICON_COPILOT, COPILOT_ICON_SVG);
+
+    // Register the Copilot terminal view
+    this.registerView(VIEW_TYPE_COPILOT, (leaf) => new CopilotView(leaf, this));
+
+    // Ribbon icon — opens Copilot in default placement
     this.addRibbonIcon(ICON_COPILOT, "Open Copilot", () => {
       this.activateView();
     });
 
-    // Command: Open Copilot
+    // Settings tab
+    this.addSettingTab(new CopilotSettingTab(this.app, this));
+
+    // Command: Open Copilot (default placement)
     this.addCommand({
       id: "open-copilot",
       name: "Open Copilot",
       callback: () => this.activateView(),
+    });
+
+    // Command: Toggle focus between editor and Copilot
+    this.addCommand({
+      id: "toggle-copilot-focus",
+      name: "Toggle focus to/from Copilot",
+      callback: () => this.toggleFocus(),
     });
 
     // Command: Restart Copilot session
@@ -31,20 +50,95 @@ export default class CopilotPlugin extends Plugin {
       },
     });
 
-    // Command: Open Copilot in new pane
+    // Command: Send current file to Copilot (uses @file syntax)
     this.addCommand({
-      id: "open-copilot-new-pane",
-      name: "Open Copilot in new pane",
-      callback: () => this.activateView(true),
+      id: "send-file-to-copilot",
+      name: "Add current file as context in Copilot",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return;
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_COPILOT);
+        if (leaves.length === 0) {
+          this.activateView();
+          return;
+        }
+        // @path tells Copilot CLI to read the file as context (like #file in VS Code)
+        (leaves[0].view as CopilotView).sendInput(`@${file.path} `);
+        this.app.workspace.setActiveLeaf(leaves[0], { focus: true });
+        (leaves[0].view as CopilotView).focusTerminal();
+      },
     });
+
+    // Command: Send selection to Copilot
+    this.addCommand({
+      id: "send-selection-to-copilot",
+      name: "Add selection as context in Copilot",
+      callback: () => {
+        const editor = this.app.workspace.activeEditor?.editor;
+        if (!editor) return;
+        const selection = editor.getSelection();
+        if (!selection) return;
+        const file = this.app.workspace.getActiveFile();
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_COPILOT);
+        if (leaves.length === 0) {
+          this.activateView();
+          return;
+        }
+        const view = leaves[0].view as CopilotView;
+        // Reference the file + paste selection so Copilot has both file context and the excerpt
+        if (file) {
+          view.sendInput(`@${file.path} `);
+        }
+        view.sendInput(`"${selection}" `);
+        this.app.workspace.setActiveLeaf(leaves[0], { focus: true });
+        view.focusTerminal();
+      },
+    });
+
+    // Placement-specific commands
+    this.addCommand({ id: "open-copilot-tab", name: "Open Copilot in new tab", callback: () => this.activateView("tab") });
+    this.addCommand({ id: "open-copilot-right", name: "Open Copilot in right sidebar", callback: () => this.activateView("right") });
+    this.addCommand({ id: "open-copilot-left", name: "Open Copilot in left sidebar", callback: () => this.activateView("left") });
+    this.addCommand({ id: "open-copilot-bottom", name: "Open Copilot in bottom pane", callback: () => this.activateView("bottom") });
+    this.addCommand({ id: "open-copilot-split", name: "Open Copilot in split pane", callback: () => this.activateView("split") });
+
+    // Auto-open on vault load
+    if (this.settings.autoOpen) {
+      this.app.workspace.onLayoutReady(() => {
+        this.activateView();
+      });
+    }
+  }
+
+  /** Toggle keyboard focus between the editor and the Copilot terminal */
+  private toggleFocus(): void {
+    const copilotLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_COPILOT);
+    if (copilotLeaves.length === 0) {
+      this.activateView();
+      return;
+    }
+
+    const activeLeaf = this.app.workspace.activeLeaf;
+    if (activeLeaf && activeLeaf.view.getViewType() === VIEW_TYPE_COPILOT) {
+      // Currently in Copilot — switch back to last editor
+      const editorLeaf = this.app.workspace.getMostRecentLeaf();
+      if (editorLeaf && editorLeaf !== activeLeaf) {
+        this.app.workspace.setActiveLeaf(editorLeaf, { focus: true });
+      }
+    } else {
+      // Currently in editor — switch to Copilot
+      this.app.workspace.setActiveLeaf(copilotLeaves[0], { focus: true });
+      (copilotLeaves[0].view as CopilotView).focusTerminal();
+    }
   }
 
   /** Open or reveal the Copilot terminal view */
-  async activateView(forceNew = false): Promise<void> {
+  async activateView(placement?: Placement): Promise<void> {
     const { workspace } = this.app;
+    const target = placement || this.settings.defaultPlacement;
 
-    // Reuse existing leaf unless forced
-    if (!forceNew) {
+    // Reuse existing leaf if no explicit placement override
+    if (!placement) {
       const existing = workspace.getLeavesOfType(VIEW_TYPE_COPILOT);
       if (existing.length > 0) {
         workspace.revealLeaf(existing[0]);
@@ -52,15 +146,37 @@ export default class CopilotPlugin extends Plugin {
       }
     }
 
-    // Open in the right sidebar by default
-    const leaf = workspace.getRightLeaf(false);
+    let leaf;
+    switch (target) {
+      case "tab":
+        leaf = workspace.getLeaf("tab");
+        break;
+      case "right":
+        leaf = workspace.getRightLeaf(false);
+        break;
+      case "left":
+        leaf = workspace.getLeftLeaf(false);
+        break;
+      case "split":
+        leaf = workspace.getLeaf("split");
+        break;
+      case "bottom":
+        leaf = workspace.getLeaf("split", "horizontal");
+        break;
+    }
+
     if (leaf) {
-      await leaf.setViewState({
-        type: VIEW_TYPE_COPILOT,
-        active: true,
-      });
+      await leaf.setViewState({ type: VIEW_TYPE_COPILOT, active: true });
       workspace.revealLeaf(leaf);
     }
+  }
+
+  async loadSettings(): Promise<void> {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
   }
 
   onunload(): void {
