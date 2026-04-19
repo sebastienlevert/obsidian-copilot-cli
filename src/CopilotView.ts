@@ -8,7 +8,7 @@ import { VIEW_TYPE_COPILOT, COPILOT_CMD } from "./constants";
 // xterm.js CSS (injected at runtime)
 import xtermCss from "@xterm/xterm/css/xterm.css";
 
-// node-pty is external — loaded at runtime from Electron's Node context
+// node-pty is external - loaded at runtime from Electron's Node context
 const pty = require("node-pty");
 
 export class CopilotView extends ItemView {
@@ -17,7 +17,6 @@ export class CopilotView extends ItemView {
   private ptyProcess: any = null;
   private resizeObserver: ResizeObserver | null = null;
   private styleEl: HTMLStyleElement | null = null;
-  private exitListenerDispose: (() => void) | null = null;
   private restartPending = false;
 
   constructor(leaf: WorkspaceLeaf) {
@@ -100,7 +99,7 @@ export class CopilotView extends ItemView {
       this.spawnCopilot();
     });
 
-    // Resize observer — refit terminal and notify PTY on container resize
+    // Resize observer - refit terminal and notify PTY on container resize
     this.resizeObserver = new ResizeObserver(() => {
       this.handleResize();
     });
@@ -127,7 +126,6 @@ export class CopilotView extends ItemView {
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
     const isWin = process.platform === "win32";
 
-    // Use the platform shell to launch copilot so PATH resolution works
     const shell = isWin ? "powershell.exe" : process.env.SHELL || "/bin/bash";
     const args = isWin
       ? ["-NoLogo", "-NoProfile", "-Command", COPILOT_CMD]
@@ -142,13 +140,18 @@ export class CopilotView extends ItemView {
         env: { ...process.env } as Record<string, string>,
       });
 
-      // PTY → xterm
+      // PTY -> xterm
       this.ptyProcess.onData((data: string) => {
         this.terminal?.write(data);
       });
 
-      // xterm → PTY
+      // xterm -> PTY
       this.terminal.onData((data: string) => {
+        if (this.restartPending) {
+          this.restartPending = false;
+          this.restart();
+          return;
+        }
         this.ptyProcess?.write(data);
       });
 
@@ -159,24 +162,15 @@ export class CopilotView extends ItemView {
         );
         this.restartPending = true;
       });
-
-      // Restart on keypress after exit
-      this.exitListenerDispose = this.terminal.onData(() => {
-        if (this.restartPending) {
-          this.restartPending = false;
-          this.restart();
-        }
-      }).dispose;
     } catch (e: any) {
       this.terminal.write(
         `\x1b[31mFailed to start Copilot CLI: ${e.message}\x1b[0m\r\n\r\n`
       );
       this.terminal.write(
         "\x1b[90mTroubleshooting:\r\n" +
-          "  1. Ensure GitHub Copilot CLI is installed: npm i -g @githubnext/github-copilot-cli\r\n" +
-          "  2. Ensure 'copilot' is in your PATH\r\n" +
-          "  3. Check that node-pty native module is rebuilt for Obsidian's Electron\r\n" +
-          "     Run: npm run rebuild-pty\x1b[0m\r\n"
+          "  1. Ensure GitHub Copilot CLI is installed (copilot in PATH)\r\n" +
+          "  2. Ensure node-pty native module is built for Obsidian's Electron\r\n" +
+          "  3. Restart Obsidian after making changes\x1b[0m\r\n"
       );
     }
   }
@@ -204,7 +198,6 @@ export class CopilotView extends ItemView {
 
   async onClose(): Promise<void> {
     this.killProcess();
-    this.exitListenerDispose?.();
     this.resizeObserver?.disconnect();
     this.terminal?.dispose();
     this.styleEl?.remove();

@@ -5,8 +5,7 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs --dev",
-    "build": "node esbuild.config.mjs",
-    "rebuild-pty": "electron-rebuild -f -w node-pty"
+    "build": "node esbuild.config.mjs"
   },
   "keywords": [
     "obsidian",
