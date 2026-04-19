@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install dependencies
         run: npm ci
@@ -27,7 +27,7 @@ jobs:
       - name: Install node-pty for bundling
         shell: pwsh
         run: |
-          # Install node-pty in a temp dir so we get clean prebuilds
+          # Install node-pty — CI's Node 22 compiles for ABI 127
           New-Item -ItemType Directory -Path "dist" -Force
           Set-Location dist
           npm init -y | Out-Null
@@ -46,7 +46,7 @@ jobs:
           Copy-Item "styles.css" "$out/"
           Copy-Item "src/pty-relay.js" "$out/pty-relay.js"
 
-          # Bundle node-pty with prebuilds (no compilation needed by user)
+          # Bundle node-pty with compiled binaries for Node 22 (current LTS)
           Copy-Item "dist/node_modules/node-pty" "$out/node_modules/node-pty" -Recurse
 
           # Create zip

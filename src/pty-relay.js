@@ -8,8 +8,11 @@
  *   Relay -> Plugin (stdout): raw PTY output bytes
  *   Resize: Plugin sends JSON on stdin: {"resize":[cols,rows]}\n
  */
-const pty = require("node-pty");
 const path = require("path");
+const { execSync } = require("child_process");
+
+// Resolve plugin directory (where this script lives)
+const pluginDir = __dirname;
 
 const cols = parseInt(process.env.COLUMNS || "80", 10);
 const rows = parseInt(process.env.LINES || "24", 10);
@@ -18,14 +21,55 @@ const cmd = process.env.COPILOT_CMD || "copilot --yolo --banner";
 
 const shell = "powershell.exe";
 const args = ["-NoLogo", "-NoProfile", "-Command", cmd];
-
-const ptyProc = pty.spawn(shell, args, {
+const spawnOpts = {
   name: "xterm-256color",
   cols,
   rows,
   cwd,
   env: { ...process.env, TERM: "xterm-256color" },
-});
+};
+
+/**
+ * Try to spawn the PTY. If node-pty has an ABI mismatch, auto-rebuild and retry.
+ */
+function spawnPty() {
+  let pty = require("node-pty");
+  try {
+    return pty.spawn(shell, args, spawnOpts);
+  } catch (e) {
+    if (e.code === 'ERR_DLOPEN_FAILED' && e.message.includes('NODE_MODULE_VERSION')) {
+      process.stderr.write(
+        `[pty-relay] node-pty ABI mismatch — rebuilding for Node ${process.version}...\n`
+      );
+      try {
+        execSync("npm install node-pty@^1.0.0 --no-save", {
+          cwd: pluginDir,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: { ...process.env, npm_config_target: "" },
+          timeout: 120000,
+        });
+        process.stderr.write(`[pty-relay] Rebuild successful!\n`);
+        // Clear require cache and retry
+        Object.keys(require.cache).forEach((key) => {
+          if (key.includes("node-pty")) delete require.cache[key];
+        });
+        pty = require("node-pty");
+        return pty.spawn(shell, args, spawnOpts);
+      } catch (rebuildErr) {
+        process.stderr.write(
+          `[pty-relay] Auto-rebuild failed.\n` +
+          `Install Node.js v22 LTS (matching bundled binaries), or install\n` +
+          `Visual Studio Build Tools with C++ workload for auto-compilation.\n` +
+          `Error: ${rebuildErr.message}\n`
+        );
+        process.exit(1);
+      }
+    }
+    throw e;
+  }
+}
+
+const ptyProc = spawnPty();
 
 // PTY output -> stdout (to plugin)
 ptyProc.onData((data) => {
