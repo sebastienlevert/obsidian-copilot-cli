@@ -36,7 +36,7 @@ jobs:
       - name: Package release
         shell: pwsh
         run: |
-          $out = "obsidian-copilot"
+          $out = "copilot-cli"
           New-Item -ItemType Directory -Path $out -Force
 
           # Core plugin files
@@ -44,18 +44,19 @@ jobs:
           Copy-Item "manifest.json" "$out/"
           Copy-Item "styles.css" "$out/"
 
-          # ConPTY bridge binary (~400KB, no ABI issues)
+          # ConPTY bridge binary (~170KB, no ABI issues)
           Copy-Item "conpty-bridge/target/release/conpty-bridge.exe" "$out/"
 
           # Create zip for manual install
-          Compress-Archive -Path "$out/*" -DestinationPath "obsidian-copilot.zip" -Force
+          Compress-Archive -Path "$out/*" -DestinationPath "copilot-cli.zip" -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            obsidian-copilot.zip
+            copilot-cli.zip
             main.js
             manifest.json
             styles.css
+            conpty-bridge/target/release/conpty-bridge.exe
           generate_release_notes: true

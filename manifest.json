@@ -1,9 +1,9 @@
 {
-  "id": "obsidian-copilot",
-  "name": "Copilot",
-  "version": "0.2.0",
-  "minAppVersion": "1.4.0",
-  "description": "GitHub Copilot CLI terminal integration for Obsidian. Opens an interactive Copilot session with your vault as context.",
+  "id": "copilot-cli",
+  "name": "Copilot CLI",
+  "version": "0.3.0",
+  "minAppVersion": "1.5.0",
+  "description": "Embeds GitHub Copilot CLI as an interactive terminal inside Obsidian with automatic file context awareness.",
   "author": "Sébastien Levert",
   "authorUrl": "https://github.com/sebastienlevert",
   "isDesktopOnly": true
