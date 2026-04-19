@@ -24,27 +24,43 @@ jobs:
       - name: Build plugin
         run: npm run build
 
-      - name: Create release archive
+      - name: Install node-pty for bundling
         shell: pwsh
         run: |
-          # Release includes: main.js, manifest.json, styles.css, pty-relay.js, setup.js
-          $files = @("main.js", "manifest.json", "styles.css", "src/pty-relay.js", "setup.js")
-          foreach ($f in $files) {
-            if (-not (Test-Path $f)) {
-              Write-Error "Missing required file: $f"
-              exit 1
-            }
-          }
-          # Copy pty-relay.js to root for easier access in the release
-          Copy-Item "src/pty-relay.js" "pty-relay.js"
+          # Install node-pty in a temp dir so we get clean prebuilds
+          New-Item -ItemType Directory -Path "dist" -Force
+          Set-Location dist
+          npm init -y | Out-Null
+          npm install node-pty@^1.0.0
+          Set-Location ..
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $out = "obsidian-copilot"
+          New-Item -ItemType Directory -Path $out -Force
+
+          # Core plugin files
+          Copy-Item "main.js" "$out/"
+          Copy-Item "manifest.json" "$out/"
+          Copy-Item "styles.css" "$out/"
+          Copy-Item "src/pty-relay.js" "$out/pty-relay.js"
+
+          # Bundle node-pty with prebuilds (no compilation needed by user)
+          Copy-Item "dist/node_modules/node-pty" "$out/node_modules/node-pty" -Recurse
+
+          # Create zip
+          Compress-Archive -Path "$out/*" -DestinationPath "obsidian-copilot.zip" -Force
+
+          # Also output individual files for BRAT compatibility
+          Copy-Item "$out/main.js" "release-main.js"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            obsidian-copilot.zip
             main.js
             manifest.json
             styles.css
-            pty-relay.js
-            setup.js
           generate_release_notes: true

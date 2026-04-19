@@ -38,28 +38,14 @@ A plugin that embeds the **GitHub Copilot CLI** as a fully interactive terminal 
 1. Install the [BRAT plugin](https://github.com/TfTHacker/obsidian42-brat)
 2. Add this repo: `sebastienlevert/obsidian-copilot`
 3. Enable the plugin
-4. Run the setup command (see below)
 
 ### Manual
 
-1. Download the latest release from [Releases](https://github.com/sebastienlevert/obsidian-copilot/releases)
+1. Download `obsidian-copilot.zip` from the [latest release](https://github.com/sebastienlevert/obsidian-copilot/releases/latest)
 2. Extract into your vault's `.obsidian/plugins/obsidian-copilot/`
-3. Run the setup script:
-   ```powershell
-   cd .obsidian\plugins\obsidian-copilot
-   node setup.js
-   ```
-4. Enable "Copilot" in Settings → Community Plugins
+3. Enable "Copilot" in Settings → Community Plugins
 
-### Setup Script
-
-The `setup.js` script installs the required `node-pty` native module for your system Node.js:
-
-```powershell
-node setup.js
-```
-
-This only needs to run once (or after Node.js major version upgrades).
+That's it — no build tools or compilation needed. The release ships with prebuilt node-pty binaries for Windows (x64).
 
 ## Settings
 
