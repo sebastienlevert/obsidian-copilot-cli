@@ -178,7 +178,7 @@ export class CopilotView extends ItemView {
     const fs = require("fs") as typeof import("fs");
     const path = require("path") as typeof import("path");
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
-    const contextPath = path.join(vaultPath, this.app.vault.configDir, "plugins", this.plugin.manifest.id, ".context");
+    const contextPath = path.join(vaultPath, this.plugin.manifest.dir, ".context");
 
     const lines: string[] = [];
     if (this.lastActiveFile) {
@@ -214,7 +214,7 @@ export class CopilotView extends ItemView {
     const { spawn } = require("child_process") as typeof import("child_process");
     const path = require("path") as typeof import("path");
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
-    const pluginDir = path.join(vaultPath, this.app.vault.configDir, "plugins", this.plugin.manifest.id);
+    const pluginDir = path.join(vaultPath, this.plugin.manifest.dir);
     const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
 
     const settings = this.plugin.settings;

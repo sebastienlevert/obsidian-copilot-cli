@@ -185,7 +185,7 @@ export default class CopilotPlugin extends Plugin {
       const path = require("path") as typeof import("path");
       const fs = require("fs") as typeof import("fs");
       const vaultPath = (this.app.vault.adapter as any).basePath as string;
-      const pluginDir = path.join(vaultPath, this.app.vault.configDir, "plugins", this.manifest.id);
+      const pluginDir = path.join(vaultPath, this.manifest.dir);
       const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
 
       if (fs.existsSync(bridgePath)) return;
