@@ -29,11 +29,6 @@ export default class CopilotPlugin extends Plugin {
     // Register the Copilot terminal view
     this.registerView(VIEW_TYPE_COPILOT, (leaf) => new CopilotView(leaf, this));
 
-    // Ribbon icon — opens Copilot in default placement
-    this.addRibbonIcon(ICON_COPILOT, "Open Copilot", () => {
-      this.activateView();
-    });
-
     // Settings tab
     this.addSettingTab(new CopilotSettingTab(this.app, this));
 
