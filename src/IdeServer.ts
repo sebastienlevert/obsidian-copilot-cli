@@ -24,6 +24,7 @@ export class IdeServer {
   private sseClients: Set<any> = new Set(); // active SSE response objects
   private running = false;
   private lastActiveFile: string | null = null; // vault-relative path of last active markdown file
+  private lockFileDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(app: App, contextProvider: ContextProvider, vaultPath: string) {
     this.app = app;
@@ -34,12 +35,68 @@ export class IdeServer {
   /** Called by plugin on active-leaf-change to track the last markdown file */
   notifyActiveFile(filePath: string | null): void {
     if (filePath) this.lastActiveFile = filePath;
+    this.updateLockFile();
     this.pushSseNotification();
   }
 
   /** Called by plugin on editor-change (selection/cursor change) */
   notifySelectionChange(): void {
+    this.updateLockFile();
     this.pushSseNotification();
+  }
+
+  /** Update the lock file with current file context (debounced) */
+  private updateLockFile(): void {
+    if (!this.lockFilePath || !this.running) return;
+    if (this.lockFileDebounceTimer) clearTimeout(this.lockFileDebounceTimer);
+    this.lockFileDebounceTimer = setTimeout(() => this.writeLockFileUpdate(), 300);
+  }
+
+  /** Actually write the lock file update */
+  private writeLockFileUpdate(): void {
+    if (!this.lockFilePath || !this.running) return;
+    const fs = require("fs") as typeof import("fs");
+    try {
+      const file = this.getActiveMarkdownFile();
+      const editor = this.app.workspace.activeEditor?.editor;
+
+      // Find editor from markdown leaves if not directly active
+      let activeEditor = editor;
+      if (!activeEditor) {
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          if (!activeEditor && leaf.view?.getViewType() === "markdown") {
+            activeEditor = (leaf.view as any)?.editor;
+          }
+        });
+      }
+
+      const filePath = file ? this.toAbsolutePath(file.path) : (this.lastActiveFile ? this.toAbsolutePath(this.lastActiveFile) : undefined);
+
+      let selection: any;
+      if (activeEditor && filePath) {
+        const from = (activeEditor as any).getCursor("from");
+        const to = (activeEditor as any).getCursor("to");
+        selection = {
+          start: { line: from.line + 1, character: from.ch },
+          end: { line: to.line + 1, character: to.ch },
+        };
+      }
+
+      const lockData = {
+        socketPath: this.socketPath,
+        scheme: process.platform === "win32" ? "pipe" : "unix",
+        headers: { Authorization: `Nonce ${this.nonce}` },
+        pid: process.pid,
+        ideName: "Obsidian",
+        timestamp: Date.now(),
+        workspaceFolders: [this.vaultPath],
+        isTrusted: true,
+        ...(filePath ? { activeFile: filePath } : {}),
+        ...(selection ? { selection } : {}),
+      };
+
+      fs.writeFileSync(this.lockFilePath, JSON.stringify(lockData, null, 2), { mode: 0o600 });
+    } catch {}
   }
 
   /** Push notifications to all connected SSE clients */
