@@ -42,17 +42,35 @@ export class IdeServer {
     this.pushSseNotification();
   }
 
-  /** Push a tools/list_changed notification to all connected SSE clients */
+  /** Push notifications to all connected SSE clients */
   private pushSseNotification(): void {
     if (this.sseClients.size === 0) return;
-    const notification = JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/tools/list_changed",
-    });
-    const event = `data: ${notification}\n\n`;
+    // Send both tools and resources list_changed to cover all CLI behaviors
+    const notifications = [
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/resources/list_changed" }),
+    ];
     for (const res of this.sseClients) {
-      try { res.write(event); } catch {}
+      for (const n of notifications) {
+        try { res.write(`data: ${n}\n\n`); } catch {}
+      }
     }
+  }
+
+  /** Get the active markdown file, searching all leaves if needed */
+  private getActiveMarkdownFile(): import("obsidian").TFile | null {
+    const file = this.app.workspace.getActiveFile();
+    if (file) return file;
+
+    // Search leaves for a markdown file when terminal is focused
+    let found: import("obsidian").TFile | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (!found && leaf.view?.getViewType() === "markdown") {
+        const f = (leaf.view as any)?.file as import("obsidian").TFile | undefined;
+        if (f) found = f;
+      }
+    });
+    return found;
   }
 
   /** Start the IDE server and write the lock file */
@@ -174,6 +192,7 @@ export class IdeServer {
   /** Handle MCP requests at /mcp endpoint */
   private async handleMcp(req: any, res: any): Promise<void> {
     const sessionId = req.headers["mcp-session-id"] || req.headers["x-copilot-session-id"];
+    console.log(`Copilot CLI IDE: ${req.method} /mcp [session=${sessionId || 'none'}]`);
 
     if (req.method === "POST") {
       // Parse JSON body
@@ -194,6 +213,7 @@ export class IdeServer {
       }
 
       // Handle JSON-RPC
+      console.log(`Copilot CLI IDE: JSON-RPC method=${parsed.method || (Array.isArray(parsed) ? 'batch' : 'unknown')}`, Array.isArray(parsed) ? parsed.map((m: any) => m.method) : (parsed.params?.name || ''));
       const response = await this.handleJsonRpc(parsed, sessionId);
       if (response) {
         const sessionHeader = response._sessionId || sessionId;
@@ -257,6 +277,10 @@ export class IdeServer {
           return this.handleToolsList(id);
         case "tools/call":
           return this.handleToolsCall(id, params);
+        case "resources/list":
+          return this.handleResourcesList(id);
+        case "resources/read":
+          return this.handleResourcesRead(id, params);
         case "ping":
           return { jsonrpc: "2.0", result: {}, id };
         default:
@@ -288,7 +312,8 @@ export class IdeServer {
       result: {
         protocolVersion: "2025-03-26",
         capabilities: {
-          tools: { listChanged: false },
+          tools: { listChanged: true },
+          resources: { subscribe: false, listChanged: true },
         },
         serverInfo: {
           name: "obsidian-ide",
@@ -368,6 +393,74 @@ export class IdeServer {
       },
       id,
     };
+  }
+
+  /** Handle resources/list — expose current file as a resource */
+  private handleResourcesList(id: any): any {
+    const file = this.getActiveMarkdownFile();
+    const resources: any[] = [];
+
+    if (file) {
+      const absPath = this.toAbsolutePath(file.path);
+      const fileUrl = `file:///${absPath.replace(/\\/g, "/").replace(/^\//, "")}`;
+      resources.push({
+        uri: fileUrl,
+        name: file.name,
+        description: `Currently open file: ${file.path}`,
+        mimeType: "text/markdown",
+      });
+    }
+
+    // Also list all open files
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf.view?.getViewType() === "markdown") {
+        const f = (leaf.view as any)?.file as import("obsidian").TFile | undefined;
+        if (f && f !== file) {
+          const absPath = this.toAbsolutePath(f.path);
+          const fileUrl = `file:///${absPath.replace(/\\/g, "/").replace(/^\//, "")}`;
+          if (!resources.find(r => r.uri === fileUrl)) {
+            resources.push({
+              uri: fileUrl,
+              name: f.name,
+              mimeType: "text/markdown",
+            });
+          }
+        }
+      }
+    });
+
+    return { jsonrpc: "2.0", result: { resources }, id };
+  }
+
+  /** Handle resources/read */
+  private handleResourcesRead(id: any, params: any): any {
+    const uri = params?.uri;
+    if (!uri) {
+      return { jsonrpc: "2.0", error: { code: -32602, message: "Missing uri parameter" }, id };
+    }
+
+    // Find the file by URI
+    const path = require("path") as typeof import("path");
+    const fs = require("fs") as typeof import("fs");
+    let filePath: string;
+    try {
+      filePath = decodeURIComponent(new URL(uri).pathname).replace(/^\/([A-Za-z]:)/, "$1");
+    } catch {
+      return { jsonrpc: "2.0", error: { code: -32602, message: "Invalid URI" }, id };
+    }
+
+    try {
+      const content = fs.readFileSync(filePath, "utf-8");
+      return {
+        jsonrpc: "2.0",
+        result: {
+          contents: [{ uri, mimeType: "text/markdown", text: content }],
+        },
+        id,
+      };
+    } catch (e: any) {
+      return { jsonrpc: "2.0", error: { code: -32602, message: `Cannot read: ${e.message}` }, id };
+    }
   }
 
   /** Handle tools/call */
