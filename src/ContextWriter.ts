@@ -19,6 +19,7 @@ export class ContextWriter {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private writing = false;
   private pendingWrite = false;
+  private gitignoreChecked = false;
 
   constructor(provider: ContextProvider, settings: CopilotSettings, vaultPath: string) {
     this.provider = provider;
@@ -97,6 +98,12 @@ export class ContextWriter {
         fs.mkdirSync(githubDir, { recursive: true });
       }
 
+      // Ensure the instructions file is gitignored (once per session)
+      if (!this.gitignoreChecked) {
+        this.ensureGitignore(fs, path);
+        this.gitignoreChecked = true;
+      }
+
       // Read existing file to preserve user instructions
       let userInstructions = "";
       if (fs.existsSync(instructionsPath)) {
@@ -135,6 +142,35 @@ export class ContextWriter {
       fs.renameSync(tmpPath, instructionsPath);
     } catch (e) {
       console.error("Copilot CLI: Failed to write context instructions", e);
+    }
+  }
+
+  /**
+   * Ensure .github/copilot-instructions.md is in .gitignore so ephemeral
+   * IDE context doesn't pollute version control in shared repos.
+   */
+  private ensureGitignore(fs: typeof import("fs"), path: typeof import("path")): void {
+    const gitignorePath = path.join(this.vaultPath, ".gitignore");
+    const entry = ".github/copilot-instructions.md";
+
+    try {
+      let content = "";
+      if (fs.existsSync(gitignorePath)) {
+        content = fs.readFileSync(gitignorePath, "utf-8");
+      }
+
+      // Check if already present (exact line match)
+      const lines = content.split(/\r?\n/);
+      if (lines.some((line) => line.trim() === entry)) {
+        return;
+      }
+
+      // Append the entry
+      const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+      const comment = "# Auto-generated Obsidian IDE context for Copilot CLI";
+      fs.appendFileSync(gitignorePath, `${separator}${comment}\n${entry}\n`, "utf-8");
+    } catch (e) {
+      console.warn("Copilot CLI: Could not update .gitignore", e);
     }
   }
 
