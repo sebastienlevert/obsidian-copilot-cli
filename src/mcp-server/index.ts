@@ -9,6 +9,10 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import * as fs from "fs";
 import * as path from "path";
@@ -189,7 +193,7 @@ const server = new Server(
 
 // List available tools
 server.setRequestHandler(
-  { method: "tools/list" } as any,
+  ListToolsRequestSchema,
   async () => ({
     tools: [
       {
@@ -269,7 +273,7 @@ server.setRequestHandler(
 
 // Handle tool calls
 server.setRequestHandler(
-  { method: "tools/call" } as any,
+  CallToolRequestSchema,
   async (request: any) => {
     const { name, arguments: args } = request.params;
 
