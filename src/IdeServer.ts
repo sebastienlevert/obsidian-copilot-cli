@@ -21,6 +21,7 @@ export class IdeServer {
   private socketPath: string | null = null;
   private nonce: string | null = null;
   private sessions: Map<string, any> = new Map(); // sessionId -> transport
+  private sseClients: Set<any> = new Set(); // active SSE response objects
   private running = false;
   private lastActiveFile: string | null = null; // vault-relative path of last active markdown file
 
@@ -33,6 +34,25 @@ export class IdeServer {
   /** Called by plugin on active-leaf-change to track the last markdown file */
   notifyActiveFile(filePath: string | null): void {
     if (filePath) this.lastActiveFile = filePath;
+    this.pushSseNotification();
+  }
+
+  /** Called by plugin on editor-change (selection/cursor change) */
+  notifySelectionChange(): void {
+    this.pushSseNotification();
+  }
+
+  /** Push a tools/list_changed notification to all connected SSE clients */
+  private pushSseNotification(): void {
+    if (this.sseClients.size === 0) return;
+    const notification = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/tools/list_changed",
+    });
+    const event = `data: ${notification}\n\n`;
+    for (const res of this.sseClients) {
+      try { res.write(event); } catch {}
+    }
   }
 
   /** Start the IDE server and write the lock file */
@@ -110,6 +130,12 @@ export class IdeServer {
 
     const fs = require("fs") as typeof import("fs");
 
+    // Close all SSE connections
+    for (const res of this.sseClients) {
+      try { res.end(); } catch {}
+    }
+    this.sseClients.clear();
+
     // Close all sessions
     for (const [id, transport] of this.sessions) {
       try { await transport.close(); } catch {}
@@ -183,7 +209,7 @@ export class IdeServer {
         res.end();
       }
     } else if (req.method === "GET") {
-      // SSE endpoint for server-initiated notifications (stub)
+      // SSE endpoint for server-initiated notifications
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -191,9 +217,9 @@ export class IdeServer {
         ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
       });
       res.write(":ok\n\n");
-      // Keep connection open — CLI will reconnect as needed
+      this.sseClients.add(res);
       req.on("close", () => {
-        // Client disconnected
+        this.sseClients.delete(res);
       });
     } else if (req.method === "DELETE") {
       // Session termination

@@ -51,6 +51,11 @@ export default class CopilotPlugin extends Plugin {
       }
     }));
 
+    // Notify IDE server on editor changes (cursor/selection moves)
+    this.registerEvent(this.app.workspace.on("editor-change" as any, () => {
+      this.ideServer?.notifySelectionChange();
+    }));
+
     // Register custom Copilot icon
     addIcon(ICON_COPILOT, COPILOT_ICON_SVG);
 
