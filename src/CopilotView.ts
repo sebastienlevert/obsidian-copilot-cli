@@ -104,8 +104,8 @@ export class CopilotView extends ItemView {
     });
     this.resizeObserver.observe(wrapper);
 
-    // Watch active file/selection — trigger proactive context update
-    // so Copilot CLI gets the latest IDE state via copilot-instructions.md
+    // Watch active file/selection — trigger state JSON update
+    // so MCP server gets the latest IDE state via obsidian-state.json
 
     // file-open is the most reliable event — Obsidian passes the file directly
     this.fileOpenRef = this.app.workspace.on("file-open", (file) => {
@@ -128,12 +128,12 @@ export class CopilotView extends ItemView {
     });
     this.registerEvent(this.leafChangeRef);
 
-    // editor-change — update context when selection changes
+    // editor-change — update state when selection changes
     this.registerEvent(this.app.workspace.on("editor-change", () => {
       this.plugin.contextWriter?.scheduleWrite();
     }));
 
-    // Initial context write
+    // Initial state write
     this.cacheEditorContext();
     this.plugin.contextWriter?.writeNow();
   }

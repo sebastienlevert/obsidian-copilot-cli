@@ -24,8 +24,8 @@ src/
   main.ts              → Plugin entry point (commands, settings, view registration)
   CopilotView.ts       → Terminal view (xterm.js, PTY lifecycle, keyboard handling)
   CopilotSettingTab.ts  → Settings UI
-  ContextProvider.ts    → Proactive IDE context collection from Obsidian API
-  ContextWriter.ts      → Debounced writer for copilot-instructions.md + state JSON
+  ContextProvider.ts    → IDE state collection (JSON state for MCP server)
+  ContextWriter.ts      → Debounced writer for obsidian-state.json
   McpRegistrar.ts       → Auto-registers MCP server in ~/.copilot/mcp-config.json
   constants.ts         → Shared constants and types
   styles.css           → Terminal CSS (copied to root on build)
@@ -59,7 +59,7 @@ Builds the plugin and copies `main.js`, `styles.css`, `manifest.json`, `obsidian
 ## Key Conventions
 
 - **Keyboard events:** The terminal intercepts keyboard events at the document level (capture phase) to prevent Obsidian from stealing keystrokes. See `setupKeyboardInterception()` in `CopilotView.ts`.
-- **Proactive IDE context:** The plugin writes real-time IDE context (active file, open tabs, selection, vault structure, metadata) to `.github/copilot-instructions.md` in the vault root. Copilot CLI reads this file automatically on every conversation turn. The context is event-driven (file switch, tab change, selection change) with 500ms debouncing. See `ContextProvider.ts` and `ContextWriter.ts`.
+- **IDE state sidecar:** The plugin writes `obsidian-state.json` to `.github/` in the vault root on IDE events (file switch, tab change, selection change) with 500ms debouncing. The MCP server reads this file to serve `ide_get_selection`, `ide_get_open_files`, and `ide_get_diagnostics`. See `ContextProvider.ts` and `ContextWriter.ts`.
 - **MCP server:** The plugin ships `obsidian-mcp-server.mjs`, a standalone MCP server that Copilot CLI spawns as a subprocess. It exposes `ide_*` tools (`ide_get_selection`, `ide_get_open_files`, `ide_read_file`, `ide_get_diagnostics`, `ide_search_text`, `ide_list_dir`) so Copilot CLI treats Obsidian as a full IDE. Auto-registered in `~/.copilot/mcp-config.json` on plugin load. See `McpRegistrar.ts` and `src/mcp-server/index.ts`.
 - **No node-pty:** The project avoids `node-pty` in favor of a standalone Rust binary (`conpty-bridge.exe`) to avoid native module issues in Electron/Obsidian.
 - **Theme integration:** The xterm.js theme is derived from Obsidian CSS variables and updates automatically on theme changes.

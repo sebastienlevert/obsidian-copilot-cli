@@ -1,16 +1,11 @@
-import {
-  CONTEXT_WRITE_DEBOUNCE_MS,
-  CONTEXT_AUTO_MARKER_START,
-  CONTEXT_AUTO_MARKER_END,
-} from "./constants";
 import type { CopilotSettings } from "./constants";
 import type { ContextProvider } from "./ContextProvider";
 
+const STATE_WRITE_DEBOUNCE_MS = 500;
+
 /**
- * Handles writing the auto-generated IDE context to
- * .github/copilot-instructions.md with debouncing.
- *
- * Preserves any user-defined instructions outside the auto-generated markers.
+ * Handles writing the obsidian-state.json sidecar file used by the MCP server.
+ * Debounces writes to avoid excessive disk I/O on rapid editor events.
  */
 export class ContextWriter {
   private provider: ContextProvider;
@@ -31,10 +26,8 @@ export class ContextWriter {
     this.settings = settings;
   }
 
-  /** Schedule a debounced context write */
+  /** Schedule a debounced state write */
   scheduleWrite(): void {
-    if (!this.settings.autoInjectContext) return;
-
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
@@ -42,13 +35,11 @@ export class ContextWriter {
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
       this.executeWrite();
-    }, CONTEXT_WRITE_DEBOUNCE_MS);
+    }, STATE_WRITE_DEBOUNCE_MS);
   }
 
   /** Force an immediate write (used on Copilot spawn) */
   async writeNow(): Promise<void> {
-    if (!this.settings.autoInjectContext) return;
-
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
@@ -66,7 +57,6 @@ export class ContextWriter {
   }
 
   private async executeWrite(): Promise<void> {
-    // Prevent concurrent writes
     if (this.writing) {
       this.pendingWrite = true;
       return;
@@ -77,7 +67,6 @@ export class ContextWriter {
       await this.doWrite();
     } finally {
       this.writing = false;
-      // If another write was requested during this one, execute it
       if (this.pendingWrite) {
         this.pendingWrite = false;
         this.scheduleWrite();
@@ -90,7 +79,6 @@ export class ContextWriter {
     const path = require("path") as typeof import("path");
 
     const githubDir = path.join(this.vaultPath, ".github");
-    const instructionsPath = path.join(githubDir, "copilot-instructions.md");
 
     try {
       // Ensure .github directory exists
@@ -98,67 +86,29 @@ export class ContextWriter {
         fs.mkdirSync(githubDir, { recursive: true });
       }
 
-      // Ensure the instructions file is gitignored (once per session)
+      // Ensure the state file is gitignored (once per session)
       if (!this.gitignoreChecked) {
         this.ensureGitignore(fs, path);
         this.gitignoreChecked = true;
       }
 
-      // Read existing file to preserve user instructions
-      let userInstructions = "";
-      if (fs.existsSync(instructionsPath)) {
-        const existing = fs.readFileSync(instructionsPath, "utf-8");
-        userInstructions = this.extractUserInstructions(existing);
-      }
-
-      // Generate new auto-context
-      const autoContext = await this.provider.generateContextAsync();
-
-      // Combine: custom static instructions + user file instructions + auto context
-      const parts: string[] = [];
-
-      if (this.settings.contextCustomInstructions.trim()) {
-        parts.push(this.settings.contextCustomInstructions.trim());
-        parts.push("");
-      }
-
-      if (userInstructions.trim()) {
-        parts.push(userInstructions.trim());
-        parts.push("");
-      }
-
-      parts.push(CONTEXT_AUTO_MARKER_START);
-      parts.push("");
-      parts.push(autoContext);
-      parts.push("");
-      parts.push(CONTEXT_AUTO_MARKER_END);
-      parts.push("");
-
-      const content = parts.join("\n");
-
-      // Atomic write: write to temp file, then rename
-      const tmpPath = instructionsPath + ".tmp";
-      fs.writeFileSync(tmpPath, content, "utf-8");
-      fs.renameSync(tmpPath, instructionsPath);
-
-      // Also write JSON state file for MCP server
+      // Write JSON state file for MCP server
       const statePath = path.join(githubDir, "obsidian-state.json");
       const stateJson = JSON.stringify(this.provider.generateStateJson(), null, 2);
       const stateTmpPath = statePath + ".tmp";
       fs.writeFileSync(stateTmpPath, stateJson, "utf-8");
       fs.renameSync(stateTmpPath, statePath);
     } catch (e) {
-      console.error("Copilot CLI: Failed to write context instructions", e);
+      console.error("Copilot CLI: Failed to write state file", e);
     }
   }
 
   /**
-   * Ensure .github/copilot-instructions.md is in .gitignore so ephemeral
-   * IDE context doesn't pollute version control in shared repos.
+   * Ensure .github/obsidian-state.json is in .gitignore so ephemeral
+   * IDE state doesn't pollute version control in shared repos.
    */
   private ensureGitignore(fs: typeof import("fs"), path: typeof import("path")): void {
     const gitignorePath = path.join(this.vaultPath, ".gitignore");
-    const entry = ".github/copilot-instructions.md";
     const stateEntry = ".github/obsidian-state.json";
 
     try {
@@ -168,46 +118,13 @@ export class ContextWriter {
       }
 
       const lines = content.split(/\r?\n/);
-      const entriesToAdd: string[] = [];
-      if (!lines.some((line) => line.trim() === entry)) {
-        entriesToAdd.push(entry);
-      }
-      if (!lines.some((line) => line.trim() === stateEntry)) {
-        entriesToAdd.push(stateEntry);
-      }
+      if (lines.some((line) => line.trim() === stateEntry)) return;
 
-      if (entriesToAdd.length === 0) return;
-
-      // Append the entries
       const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
-      const comment = "# Auto-generated Obsidian IDE context for Copilot CLI";
-      fs.appendFileSync(gitignorePath, `${separator}${comment}\n${entriesToAdd.join("\n")}\n`, "utf-8");
+      const comment = "# Obsidian IDE state for Copilot CLI MCP server";
+      fs.appendFileSync(gitignorePath, `${separator}${comment}\n${stateEntry}\n`, "utf-8");
     } catch (e) {
       console.warn("Copilot CLI: Could not update .gitignore", e);
     }
-  }
-
-  /**
-   * Extract user-written instructions from the file.
-   * Everything outside the auto-generated markers is considered user content.
-   */
-  private extractUserInstructions(content: string): string {
-    const startIdx = content.indexOf(CONTEXT_AUTO_MARKER_START);
-    const endIdx = content.indexOf(CONTEXT_AUTO_MARKER_END);
-
-    if (startIdx === -1 || endIdx === -1) {
-      // No markers found — entire file is user content
-      return content;
-    }
-
-    // Everything before the start marker and after the end marker is user content
-    const before = content.slice(0, startIdx).trim();
-    const after = content.slice(endIdx + CONTEXT_AUTO_MARKER_END.length).trim();
-
-    const parts: string[] = [];
-    if (before) parts.push(before);
-    if (after) parts.push(after);
-
-    return parts.join("\n\n");
   }
 }
