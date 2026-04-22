@@ -4,15 +4,11 @@ import { CopilotSettingTab } from "./CopilotSettingTab";
 import { VIEW_TYPE_COPILOT, ICON_COPILOT, COPILOT_ICON_SVG, DEFAULT_SETTINGS } from "./constants";
 import type { CopilotSettings, Placement } from "./constants";
 import { ContextProvider } from "./ContextProvider";
-import { ContextWriter } from "./ContextWriter";
-import { McpRegistrar } from "./McpRegistrar";
 import { IdeServer } from "./IdeServer";
 
 export default class CopilotPlugin extends Plugin {
   settings: CopilotSettings = { ...DEFAULT_SETTINGS };
   contextProvider: ContextProvider | null = null;
-  contextWriter: ContextWriter | null = null;
-  private mcpRegistrar: McpRegistrar | null = null;
   private ideServer: IdeServer | null = null;
 
   async onload(): Promise<void> {
@@ -31,16 +27,9 @@ export default class CopilotPlugin extends Plugin {
       console.error("Copilot CLI: ensureConPtyBridge failed", e);
     }
 
-    // Initialize IDE state system (writes obsidian-state.json for MCP server)
+    // Initialize IDE context provider (selection caching for IDE server)
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
     this.contextProvider = new ContextProvider(this.app, this.settings);
-    this.contextWriter = new ContextWriter(this.contextProvider, this.settings, vaultPath);
-
-    // Register MCP server so Copilot CLI can discover Obsidian as an IDE
-    const pathMod = require("path") as typeof import("path");
-    const pluginDir = pathMod.join(vaultPath, this.manifest.dir);
-    this.mcpRegistrar = new McpRegistrar(vaultPath, pluginDir);
-    this.mcpRegistrar.register();
 
     // Start native IDE server so /ide command recognizes Obsidian
     this.ideServer = new IdeServer(this.app, this.contextProvider, vaultPath);
@@ -48,19 +37,14 @@ export default class CopilotPlugin extends Plugin {
       console.error("Copilot CLI: Failed to start IDE server", e);
     });
 
-    // Watch workspace events at plugin level so IDE state updates
-    // even when the Copilot terminal view is not open
-    this.registerEvent(this.app.workspace.on("file-open", (file) => {
-      if (file) this.contextWriter?.scheduleWrite();
-    }));
+    // Remove legacy MCP server registration (replaced by native IDE server)
+    this.removeLegacyMcpRegistration();
+
+    // Watch workspace events at plugin level so IDE server always has fresh context
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       if (leaf?.view?.getViewType() === "markdown") {
         this.contextProvider?.clearCachedSelection();
-        this.contextWriter?.scheduleWrite();
       }
-    }));
-    this.registerEvent(this.app.workspace.on("editor-change", () => {
-      this.contextWriter?.scheduleWrite();
     }));
 
     // Register custom Copilot icon
@@ -241,20 +225,37 @@ export default class CopilotPlugin extends Plugin {
     }
   }
 
+  /** Remove legacy MCP server entry from ~/.copilot/mcp-config.json */
+  private removeLegacyMcpRegistration(): void {
+    try {
+      const fs = require("fs") as typeof import("fs");
+      const path = require("path") as typeof import("path");
+      const os = require("os") as typeof import("os");
+      const configPath = path.join(os.homedir(), ".copilot", "mcp-config.json");
+
+      if (!fs.existsSync(configPath)) return;
+
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      if (config.mcpServers?.obsidian) {
+        delete config.mcpServers.obsidian;
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+        console.log("Copilot CLI: Removed legacy MCP server registration");
+      }
+    } catch (e) {
+      // Non-critical — silently ignore
+    }
+  }
+
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-    // Propagate settings changes to the context system
     this.contextProvider?.updateSettings(this.settings);
-    this.contextWriter?.updateSettings(this.settings);
   }
 
   onunload(): void {
-    // Cancel any pending state writes
-    this.contextWriter?.cancel();
     // Stop the IDE server and remove lock file
     this.ideServer?.stop();
     // Views are automatically cleaned up by Obsidian

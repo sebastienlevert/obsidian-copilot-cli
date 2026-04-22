@@ -332,6 +332,11 @@ export class IdeServer {
               required: ["name"],
             },
           },
+          {
+            name: "get_open_files",
+            description: "Get list of currently open files in the IDE, including the active file.",
+            inputSchema: { type: "object", properties: {} },
+          },
         ],
       },
       id,
@@ -363,6 +368,9 @@ export class IdeServer {
         break;
       case "update_session_name":
         result = { success: true };
+        break;
+      case "get_open_files":
+        result = this.toolGetOpenFiles();
         break;
       default:
         return {
@@ -482,6 +490,28 @@ export class IdeServer {
       already_closed: true,
       tab_name: tabName,
       message: `No active diff found with tab name "${tabName}" (Obsidian auto-accepts diffs)`,
+    };
+  }
+
+  private toolGetOpenFiles(): any {
+    const file = this.app.workspace.getActiveFile();
+    const openFiles: string[] = [];
+
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf.view?.getViewType() === "markdown") {
+        const f = (leaf.view as any)?.file as import("obsidian").TFile | undefined;
+        if (f) {
+          const absPath = this.toAbsolutePath(f.path);
+          if (!openFiles.includes(absPath)) {
+            openFiles.push(absPath);
+          }
+        }
+      }
+    });
+
+    return {
+      activeFile: file ? this.toAbsolutePath(file.path) : null,
+      openFiles,
     };
   }
 

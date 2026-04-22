@@ -102,9 +102,8 @@ export class CopilotView extends ItemView {
     });
     this.resizeObserver.observe(wrapper);
 
-    // Initial state write when terminal view opens
+    // Cache active file for PTY environment
     this.cacheEditorContext();
-    this.plugin.contextWriter?.writeNow();
   }
 
   /** Build xterm theme from Obsidian's CSS variables — adapts to any theme */

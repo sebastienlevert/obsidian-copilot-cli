@@ -24,14 +24,13 @@ Run the production build from the repository root:
 npm run build
 ```
 
-This produces four artifacts:
+This produces three artifacts:
 
 | File                       | Description                           |
 | -------------------------- | ------------------------------------- |
 | `main.js`                  | Bundled plugin code (esbuild output)  |
 | `styles.css`               | Global styles (copied by esbuild)     |
 | `manifest.json`            | Obsidian plugin manifest (source)     |
-| `obsidian-mcp-server.mjs`  | Standalone MCP server for Copilot CLI |
 
 The build **must** succeed (exit code 0) before continuing. If it fails, stop and report the errors to the user.
 
@@ -75,7 +74,6 @@ mkdir -p "<OBSIDIAN_VAULT_PATH>/.obsidian/plugins/copilot-cli/"
 cp main.js     "<OBSIDIAN_VAULT_PATH>/.obsidian/plugins/copilot-cli/main.js"
 cp styles.css  "<OBSIDIAN_VAULT_PATH>/.obsidian/plugins/copilot-cli/styles.css"
 cp manifest.json "<OBSIDIAN_VAULT_PATH>/.obsidian/plugins/copilot-cli/manifest.json"
-cp obsidian-mcp-server.mjs "<OBSIDIAN_VAULT_PATH>/.obsidian/plugins/copilot-cli/obsidian-mcp-server.mjs"
 ```
 
 Also copy the ConPTY bridge binary if it exists:
@@ -95,7 +93,6 @@ After copying, print a summary:
    - main.js
    - styles.css
    - manifest.json
-   - obsidian-mcp-server.mjs
    - conpty-bridge.exe (if copied)
 
 Reload the plugin in Obsidian: Settings → Community Plugins → Copilot CLI → Reload
