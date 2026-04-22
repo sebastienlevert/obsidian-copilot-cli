@@ -249,7 +249,8 @@ export class IdeServer {
   /** Handle MCP requests at /mcp endpoint */
   private async handleMcp(req: any, res: any): Promise<void> {
     const sessionId = req.headers["mcp-session-id"] || req.headers["x-copilot-session-id"];
-    console.log(`Copilot CLI IDE: ${req.method} /mcp [session=${sessionId || 'none'}]`);
+    // Debug: uncomment to trace MCP requests
+    // console.log(`Copilot CLI IDE: ${req.method} /mcp [session=${sessionId || 'none'}]`);
 
     if (req.method === "POST") {
       // Parse JSON body
@@ -270,7 +271,8 @@ export class IdeServer {
       }
 
       // Handle JSON-RPC
-      console.log(`Copilot CLI IDE: JSON-RPC method=${parsed.method || (Array.isArray(parsed) ? 'batch' : 'unknown')}`, Array.isArray(parsed) ? parsed.map((m: any) => m.method) : (parsed.params?.name || ''));
+      // Debug: uncomment to trace JSON-RPC methods
+      // console.log(`Copilot CLI IDE: JSON-RPC method=${parsed.method || (Array.isArray(parsed) ? 'batch' : 'unknown')}`, Array.isArray(parsed) ? parsed.map((m: any) => m.method) : (parsed.params?.name || ''));
       const response = await this.handleJsonRpc(parsed, sessionId);
       if (response) {
         const sessionHeader = response._sessionId || sessionId;
