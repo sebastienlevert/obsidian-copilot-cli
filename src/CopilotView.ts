@@ -20,8 +20,6 @@ export class CopilotView extends ItemView {
   private restartPending = false;
   private plugin: CopilotPlugin;
   private lastActiveFile: string | null = null;
-  private fileOpenRef: any = null;
-  private leafChangeRef: any = null;
   private themeMutationObserver: MutationObserver | null = null;
   private documentKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private terminalWrapper: HTMLElement | null = null;
@@ -104,36 +102,7 @@ export class CopilotView extends ItemView {
     });
     this.resizeObserver.observe(wrapper);
 
-    // Watch active file/selection — trigger state JSON update
-    // so MCP server gets the latest IDE state via obsidian-state.json
-
-    // file-open is the most reliable event — Obsidian passes the file directly
-    this.fileOpenRef = this.app.workspace.on("file-open", (file) => {
-      if (file) {
-        this.lastActiveFile = file.path;
-        this.plugin.contextWriter?.scheduleWrite();
-      }
-    });
-    this.registerEvent(this.fileOpenRef);
-
-    // active-leaf-change — update file when switching to a markdown leaf
-    this.leafChangeRef = this.app.workspace.on("active-leaf-change", (leaf) => {
-      if (leaf?.view?.getViewType() === "markdown") {
-        const file = this.app.workspace.getActiveFile();
-        if (file) this.lastActiveFile = file.path;
-        // Clear cached selection when switching files so stale selections don't persist
-        this.plugin.contextProvider?.clearCachedSelection();
-        this.plugin.contextWriter?.scheduleWrite();
-      }
-    });
-    this.registerEvent(this.leafChangeRef);
-
-    // editor-change — update state when selection changes
-    this.registerEvent(this.app.workspace.on("editor-change", () => {
-      this.plugin.contextWriter?.scheduleWrite();
-    }));
-
-    // Initial state write
+    // Initial state write when terminal view opens
     this.cacheEditorContext();
     this.plugin.contextWriter?.writeNow();
   }

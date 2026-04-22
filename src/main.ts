@@ -6,12 +6,14 @@ import type { CopilotSettings, Placement } from "./constants";
 import { ContextProvider } from "./ContextProvider";
 import { ContextWriter } from "./ContextWriter";
 import { McpRegistrar } from "./McpRegistrar";
+import { IdeServer } from "./IdeServer";
 
 export default class CopilotPlugin extends Plugin {
   settings: CopilotSettings = { ...DEFAULT_SETTINGS };
   contextProvider: ContextProvider | null = null;
   contextWriter: ContextWriter | null = null;
   private mcpRegistrar: McpRegistrar | null = null;
+  private ideServer: IdeServer | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -39,6 +41,27 @@ export default class CopilotPlugin extends Plugin {
     const pluginDir = pathMod.join(vaultPath, this.manifest.dir);
     this.mcpRegistrar = new McpRegistrar(vaultPath, pluginDir);
     this.mcpRegistrar.register();
+
+    // Start native IDE server so /ide command recognizes Obsidian
+    this.ideServer = new IdeServer(this.app, this.contextProvider, vaultPath);
+    this.ideServer.start().catch((e) => {
+      console.error("Copilot CLI: Failed to start IDE server", e);
+    });
+
+    // Watch workspace events at plugin level so IDE state updates
+    // even when the Copilot terminal view is not open
+    this.registerEvent(this.app.workspace.on("file-open", (file) => {
+      if (file) this.contextWriter?.scheduleWrite();
+    }));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      if (leaf?.view?.getViewType() === "markdown") {
+        this.contextProvider?.clearCachedSelection();
+        this.contextWriter?.scheduleWrite();
+      }
+    }));
+    this.registerEvent(this.app.workspace.on("editor-change", () => {
+      this.contextWriter?.scheduleWrite();
+    }));
 
     // Register custom Copilot icon
     addIcon(ICON_COPILOT, COPILOT_ICON_SVG);
@@ -232,6 +255,8 @@ export default class CopilotPlugin extends Plugin {
   onunload(): void {
     // Cancel any pending state writes
     this.contextWriter?.cancel();
+    // Stop the IDE server and remove lock file
+    this.ideServer?.stop();
     // Views are automatically cleaned up by Obsidian
   }
 }
