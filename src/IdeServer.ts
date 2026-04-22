@@ -22,11 +22,17 @@ export class IdeServer {
   private nonce: string | null = null;
   private sessions: Map<string, any> = new Map(); // sessionId -> transport
   private running = false;
+  private lastActiveFile: string | null = null; // vault-relative path of last active markdown file
 
   constructor(app: App, contextProvider: ContextProvider, vaultPath: string) {
     this.app = app;
     this.contextProvider = contextProvider;
     this.vaultPath = vaultPath;
+  }
+
+  /** Called by plugin on active-leaf-change to track the last markdown file */
+  notifyActiveFile(filePath: string | null): void {
+    if (filePath) this.lastActiveFile = filePath;
   }
 
   /** Start the IDE server and write the lock file */
@@ -397,16 +403,30 @@ export class IdeServer {
   }
 
   private toolGetSelection(): any {
-    const file = this.app.workspace.getActiveFile();
-    const editor = this.app.workspace.activeEditor?.editor;
+    // Try to get the active markdown editor — may be null if terminal has focus
+    let editor = this.app.workspace.activeEditor?.editor;
+    let activeFile = this.app.workspace.getActiveFile();
 
-    if (editor) {
+    // If no active editor (e.g. terminal is focused), search for the most recent markdown leaf
+    if (!editor) {
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        if (!editor && leaf.view?.getViewType() === "markdown") {
+          const e = (leaf.view as any)?.editor;
+          const f = (leaf.view as any)?.file as import("obsidian").TFile | undefined;
+          if (e) {
+            editor = e;
+            if (f) activeFile = f;
+          }
+        }
+      });
+    }
+
+    if (editor && activeFile) {
       const selText = editor.getSelection();
-      const from = editor.getCursor("from");
-      const to = editor.getCursor("to");
-      const activeFile = file || (this.app.workspace.activeEditor as any)?.file;
-      const filePath = activeFile ? this.toAbsolutePath(activeFile.path) : "";
-      const fileUrl = filePath ? `file:///${filePath.replace(/\\/g, "/").replace(/^\//, "")}` : "";
+      const from = (editor as any).getCursor("from");
+      const to = (editor as any).getCursor("to");
+      const filePath = this.toAbsolutePath(activeFile.path);
+      const fileUrl = `file:///${filePath.replace(/\\/g, "/").replace(/^\//, "")}`;
 
       return {
         text: selText || "",
@@ -438,6 +458,20 @@ export class IdeServer {
           end: { line: (sel.endLine || 1) - 1, character: sel.endCh || 0 },
           isEmpty: !sel.text || sel.text.trim().length === 0,
         },
+        current: false,
+      };
+    }
+
+    // Last resort: report the last known active file with empty selection
+    const lastFile = this.lastActiveFile || (this.app.workspace.getActiveFile()?.path);
+    if (lastFile) {
+      const filePath = this.toAbsolutePath(lastFile);
+      const fileUrl = `file:///${filePath.replace(/\\/g, "/").replace(/^\//, "")}`;
+      return {
+        text: "",
+        filePath,
+        fileUrl,
+        selection: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, isEmpty: true },
         current: false,
       };
     }

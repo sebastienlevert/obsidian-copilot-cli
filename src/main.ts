@@ -44,6 +44,10 @@ export default class CopilotPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       if (leaf?.view?.getViewType() === "markdown") {
         this.contextProvider?.clearCachedSelection();
+        const file = (leaf.view as any)?.file;
+        if (file && this.ideServer) {
+          this.ideServer.notifyActiveFile(file.path);
+        }
       }
     }));
 
