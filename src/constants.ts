@@ -21,6 +21,18 @@ export interface CopilotSettings {
   persistentSession: boolean;
   /** Auto-generated session UUID (stored on first use) */
   sessionId: string;
+  /** Vault folder for images pasted into the terminal */
+  imagePasteFolder: string;
+  /** Include active file content in proactive context */
+  contextIncludeFileContent: boolean;
+  /** Include list of open files in proactive context */
+  contextIncludeOpenFiles: boolean;
+  /** Include vault structure tree in proactive context */
+  contextIncludeVaultStructure: boolean;
+  /** Max file content size (bytes) to include in context */
+  contextMaxFileSize: number;
+  /** Custom static instructions to prepend */
+  contextCustomInstructions: string;
 }
 
 export const DEFAULT_SETTINGS: CopilotSettings = {
@@ -31,4 +43,20 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   autoInjectContext: true,
   persistentSession: true,
   sessionId: "",
+  imagePasteFolder: "copilot-images",
+  contextIncludeFileContent: true,
+  contextIncludeOpenFiles: true,
+  contextIncludeVaultStructure: true,
+  contextMaxFileSize: 50000,
+  contextCustomInstructions: "",
 };
+
+/** Debounce interval for context file writes (ms) */
+export const CONTEXT_WRITE_DEBOUNCE_MS = 500;
+
+/** Interval for refreshing the vault structure cache (ms) */
+export const VAULT_STRUCTURE_REFRESH_MS = 30000;
+
+/** Marker used to separate auto-generated context from user instructions */
+export const CONTEXT_AUTO_MARKER_START = "<!-- OBSIDIAN-COPILOT-CONTEXT-START -->";
+export const CONTEXT_AUTO_MARKER_END = "<!-- OBSIDIAN-COPILOT-CONTEXT-END -->";

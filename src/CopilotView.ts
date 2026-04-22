@@ -23,6 +23,8 @@ export class CopilotView extends ItemView {
   private fileOpenRef: any = null;
   private leafChangeRef: any = null;
   private themeMutationObserver: MutationObserver | null = null;
+  private documentKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  private terminalWrapper: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: CopilotPlugin) {
     super(leaf);
@@ -53,6 +55,7 @@ export class CopilotView extends ItemView {
 
     // Terminal wrapper fills the view
     const wrapper = container.createDiv({ cls: "copilot-terminal-wrapper" });
+    this.terminalWrapper = wrapper;
 
     // Initialize xterm.js — theme reads from Obsidian CSS variables
     this.terminal = new Terminal({
@@ -72,6 +75,11 @@ export class CopilotView extends ItemView {
     // Canvas renderer is used (WebGL requires Workers which Obsidian doesn't support)
 
     this.terminal.open(wrapper);
+
+    // --- Native keyboard & clipboard handling ---
+    // Obsidian intercepts key events at the document level, so we must
+    // stop propagation before they bubble up from the terminal.
+    this.setupKeyboardInterception(wrapper);
 
     // Watch for Obsidian theme changes (light/dark toggle, theme switch)
     this.themeMutationObserver = new MutationObserver(() => {
@@ -96,14 +104,14 @@ export class CopilotView extends ItemView {
     });
     this.resizeObserver.observe(wrapper);
 
-    // Watch active file/selection — write to .context file so Copilot
-    // can discover the active file via instructions in AGENTS.md
+    // Watch active file/selection — trigger proactive context update
+    // so Copilot CLI gets the latest IDE state via copilot-instructions.md
 
     // file-open is the most reliable event — Obsidian passes the file directly
     this.fileOpenRef = this.app.workspace.on("file-open", (file) => {
       if (file) {
         this.lastActiveFile = file.path;
-        this.writeContextFile();
+        this.plugin.contextWriter?.scheduleWrite();
       }
     });
     this.registerEvent(this.fileOpenRef);
@@ -113,14 +121,19 @@ export class CopilotView extends ItemView {
       if (leaf?.view?.getViewType() === "markdown") {
         const file = this.app.workspace.getActiveFile();
         if (file) this.lastActiveFile = file.path;
-        this.writeContextFile();
+        this.plugin.contextWriter?.scheduleWrite();
       }
     });
     this.registerEvent(this.leafChangeRef);
 
+    // editor-change — update context when selection changes
+    this.registerEvent(this.app.workspace.on("editor-change", () => {
+      this.plugin.contextWriter?.scheduleWrite();
+    }));
+
     // Initial context write
     this.cacheEditorContext();
-    this.writeContextFile();
+    this.plugin.contextWriter?.writeNow();
   }
 
   /** Build xterm theme from Obsidian's CSS variables — adapts to any theme */
@@ -160,36 +173,141 @@ export class CopilotView extends ItemView {
     };
   }
 
+  /**
+   * Intercept keyboard and clipboard events so Obsidian doesn't steal them
+   * from the terminal.
+   *
+   * Strategy:
+   *  - attachCustomKeyEventHandler: tell xterm what to handle vs. ignore,
+   *    and manually handle Ctrl+V paste / Ctrl+C copy.
+   *  - Wrapper bubble-phase listener: call stopPropagation() AFTER xterm
+   *    has processed the event so it never reaches Obsidian's hotkey system
+   *    (which listens higher up the DOM).
+   */
+  private setupKeyboardInterception(wrapper: HTMLElement): void {
+    if (!this.terminal) return;
+
+    // Tell xterm which keys it should handle vs. pass through.
+    // Return true  → xterm processes the key normally.
+    // Return false → xterm ignores the key.
+    this.terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+
+      // Let Obsidian keep its devtools / reload shortcuts
+      if (mod && e.shiftKey && e.key === "I") return false;
+      if (mod && e.key === "r") return false;
+      if (e.key === "F11") return false;
+      if (e.key === "F12") return false;
+
+      // Ctrl+V → paste from clipboard. Handles text and images.
+      // Return false so xterm doesn't also send raw \x16.
+      if (mod && e.key === "v" && e.type === "keydown") {
+        e.preventDefault();
+        this.handlePaste();
+        return false;
+      }
+
+      // Ctrl+Enter → send newline for multi-line input in Copilot CLI.
+      // xterm sends \r for all Enter variants, so we handle this manually.
+      if (e.ctrlKey && e.key === "Enter" && e.type === "keydown") {
+        this.childProc?.stdin?.write("\n");
+        e.preventDefault();
+        return false;
+      }
+
+      // Shift+Enter → also used for new lines in some CLI tools.
+      if (e.shiftKey && e.key === "Enter" && e.type === "keydown") {
+        this.childProc?.stdin?.write("\n");
+        e.preventDefault();
+        return false;
+      }
+
+      // Ctrl+C with a selection → copy to clipboard, don't send SIGINT
+      if (mod && e.key === "c" && this.terminal?.hasSelection()) {
+        navigator.clipboard.writeText(this.terminal.getSelection());
+        this.terminal.clearSelection();
+        e.preventDefault();
+        return false;
+      }
+
+      // Everything else: let xterm handle it
+      return true;
+    });
+
+    // Bubble-phase listener on the wrapper: after xterm has processed the
+    // event, stop it from bubbling up to Obsidian's document-level handlers.
+    this.documentKeyHandler = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+
+      // Let passthrough shortcuts bubble to Obsidian
+      if (mod && e.shiftKey && e.key === "I") return;
+      if (mod && e.key === "r") return;
+      if (e.key === "F11" || e.key === "F12") return;
+
+      e.stopPropagation();
+    };
+
+    wrapper.addEventListener("keydown", this.documentKeyHandler, false);
+    wrapper.addEventListener("keyup", this.documentKeyHandler, false);
+  }
+
+  /**
+   * Read the clipboard and paste into the terminal. Handles both text and
+   * image content. Images are saved to the vault and the file path is pasted.
+   */
+  private async handlePaste(): Promise<void> {
+    if (!this.terminal) return;
+
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        // Prefer text if available
+        if (item.types.includes("text/plain")) {
+          const blob = await item.getType("text/plain");
+          const text = await blob.text();
+          if (text) {
+            this.terminal.paste(text);
+            return;
+          }
+        }
+
+        // Handle image types — save to vault and paste the path
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split("/")[1] === "jpeg" ? "jpg" : imageType.split("/")[1];
+          const fileName = `paste-${Date.now()}.${ext}`;
+          const folderPath = this.plugin.settings.imagePasteFolder || "copilot-images";
+
+          // Ensure the folder exists
+          if (!this.app.vault.getAbstractFileByPath(folderPath)) {
+            await this.app.vault.createFolder(folderPath);
+          }
+
+          const filePath = `${folderPath}/${fileName}`;
+          const buffer = await blob.arrayBuffer();
+          await this.app.vault.createBinary(filePath, buffer);
+
+          this.terminal.paste(filePath);
+          return;
+        }
+      }
+    } catch {
+      // Fallback to readText (e.g. if clipboard.read() is not supported)
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) this.terminal.paste(text);
+      } catch {
+        // Clipboard access denied — nothing to paste
+      }
+    }
+  }
+
   /** Cache the active file */
   private cacheEditorContext(): void {
     const file = this.app.workspace.getActiveFile();
     if (file) {
       this.lastActiveFile = file.path;
-    }
-  }
-
-  /**
-   * Write the current context to a .context file in the plugin folder.
-   * Copilot reads this via instructions in AGENTS.md — no readline manipulation needed.
-   */
-  private writeContextFile(): void {
-    if (!this.plugin.settings.autoInjectContext) return;
-
-    const fs = require("fs") as typeof import("fs");
-    const path = require("path") as typeof import("path");
-    const vaultPath = (this.app.vault.adapter as any).basePath as string;
-    const contextPath = path.join(vaultPath, this.plugin.manifest.dir, ".context");
-
-    const lines: string[] = [];
-    if (this.lastActiveFile) {
-      lines.push(`PENSIEVE_ACTIVE_FILE=${this.lastActiveFile}`);
-    }
-    lines.push(`PENSIEVE_UPDATED=${new Date().toISOString()}`);
-
-    try {
-      fs.writeFileSync(contextPath, lines.join("\n") + "\n", "utf-8");
-    } catch {
-      // Silently ignore write errors (plugin dir may not exist yet)
     }
   }
 
@@ -324,6 +442,12 @@ export class CopilotView extends ItemView {
     this.killProcess();
     this.resizeObserver?.disconnect();
     this.themeMutationObserver?.disconnect();
+    if (this.documentKeyHandler && this.terminalWrapper) {
+      this.terminalWrapper.removeEventListener("keydown", this.documentKeyHandler, false);
+      this.terminalWrapper.removeEventListener("keyup", this.documentKeyHandler, false);
+      this.documentKeyHandler = null;
+    }
+    this.terminalWrapper = null;
     this.terminal?.dispose();
     this.styleEl?.remove();
     this.terminal = null;

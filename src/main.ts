@@ -1,11 +1,16 @@
 import { Plugin, addIcon, Notice, requestUrl } from "obsidian";
 import { CopilotView } from "./CopilotView";
 import { CopilotSettingTab } from "./CopilotSettingTab";
-import { VIEW_TYPE_COPILOT, ICON_COPILOT, COPILOT_ICON_SVG, DEFAULT_SETTINGS } from "./constants";
+import { VIEW_TYPE_COPILOT, ICON_COPILOT, COPILOT_ICON_SVG, DEFAULT_SETTINGS, VAULT_STRUCTURE_REFRESH_MS } from "./constants";
 import type { CopilotSettings, Placement } from "./constants";
+import { ContextProvider } from "./ContextProvider";
+import { ContextWriter } from "./ContextWriter";
 
 export default class CopilotPlugin extends Plugin {
   settings: CopilotSettings = { ...DEFAULT_SETTINGS };
+  contextProvider: ContextProvider | null = null;
+  contextWriter: ContextWriter | null = null;
+  private vaultStructureInterval: ReturnType<typeof setInterval> | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -22,6 +27,28 @@ export default class CopilotPlugin extends Plugin {
     } catch (e) {
       console.error("Copilot CLI: ensureConPtyBridge failed", e);
     }
+
+    // Initialize proactive IDE context system
+    const vaultPath = (this.app.vault.adapter as any).basePath as string;
+    this.contextProvider = new ContextProvider(this.app, this.settings);
+    this.contextWriter = new ContextWriter(this.contextProvider, this.settings, vaultPath);
+
+    // Refresh vault structure cache periodically
+    this.vaultStructureInterval = setInterval(() => {
+      this.contextProvider?.invalidateVaultStructure();
+      this.contextWriter?.scheduleWrite();
+    }, VAULT_STRUCTURE_REFRESH_MS);
+
+    // Invalidate vault structure on file create/delete/rename
+    this.registerEvent(this.app.vault.on("create", () => {
+      this.contextProvider?.invalidateVaultStructure();
+    }));
+    this.registerEvent(this.app.vault.on("delete", () => {
+      this.contextProvider?.invalidateVaultStructure();
+    }));
+    this.registerEvent(this.app.vault.on("rename", () => {
+      this.contextProvider?.invalidateVaultStructure();
+    }));
 
     // Register custom Copilot icon
     addIcon(ICON_COPILOT, COPILOT_ICON_SVG);
@@ -207,9 +234,18 @@ export default class CopilotPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+    // Propagate settings changes to the context system
+    this.contextProvider?.updateSettings(this.settings);
+    this.contextWriter?.updateSettings(this.settings);
   }
 
   onunload(): void {
+    // Cancel any pending context writes
+    this.contextWriter?.cancel();
+    if (this.vaultStructureInterval) {
+      clearInterval(this.vaultStructureInterval);
+      this.vaultStructureInterval = null;
+    }
     // Views are automatically cleaned up by Obsidian
   }
 }
