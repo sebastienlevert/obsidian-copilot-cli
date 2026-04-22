@@ -14,6 +14,7 @@ An Obsidian plugin that embeds the GitHub Copilot CLI as an interactive xterm.js
 | Terminal    | xterm.js (canvas renderer)              |
 | PTY bridge  | Rust (`conpty-bridge/`) → ConPTY on Win |
 | MCP server  | `@modelcontextprotocol/sdk` (stdio)     |
+| IDE server  | Node.js HTTP on named pipe (MCP JSON-RPC) |
 | Bundler     | esbuild (`esbuild.config.mjs`)          |
 | Package     | npm                                     |
 
@@ -27,6 +28,7 @@ src/
   ContextProvider.ts    → IDE state collection (JSON state for MCP server)
   ContextWriter.ts      → Debounced writer for obsidian-state.json
   McpRegistrar.ts       → Auto-registers MCP server in ~/.copilot/mcp-config.json
+  IdeServer.ts          → Native IDE server (HTTP on named pipe, /ide discovery)
   constants.ts         → Shared constants and types
   styles.css           → Terminal CSS (copied to root on build)
   mcp-server/
@@ -61,6 +63,7 @@ Builds the plugin and copies `main.js`, `styles.css`, `manifest.json`, `obsidian
 - **Keyboard events:** The terminal intercepts keyboard events at the document level (capture phase) to prevent Obsidian from stealing keystrokes. See `setupKeyboardInterception()` in `CopilotView.ts`.
 - **IDE state sidecar:** The plugin writes `obsidian-state.json` to `.github/` in the vault root on IDE events (file switch, tab change, selection change) with 500ms debouncing. The MCP server reads this file to serve `ide_get_selection`, `ide_get_open_files`, and `ide_get_diagnostics`. See `ContextProvider.ts` and `ContextWriter.ts`.
 - **MCP server:** The plugin ships `obsidian-mcp-server.mjs`, a standalone MCP server that Copilot CLI spawns as a subprocess. It exposes `ide_*` tools (`ide_get_selection`, `ide_get_open_files`, `ide_read_file`, `ide_get_diagnostics`, `ide_search_text`, `ide_list_dir`) so Copilot CLI treats Obsidian as a full IDE. Auto-registered in `~/.copilot/mcp-config.json` on plugin load. See `McpRegistrar.ts` and `src/mcp-server/index.ts`.
+- **Native IDE server:** The plugin runs an HTTP server on a named pipe (Windows) or Unix socket that implements the same MCP JSON-RPC protocol VS Code uses. A lock file at `~/.copilot/ide/<uuid>.lock` advertises the socket path, auth nonce, and workspace folders so Copilot CLI's `/ide` command can discover Obsidian. Stale lock files are cleaned on startup by PID check. See `IdeServer.ts`.
 - **No node-pty:** The project avoids `node-pty` in favor of a standalone Rust binary (`conpty-bridge.exe`) to avoid native module issues in Electron/Obsidian.
 - **Theme integration:** The xterm.js theme is derived from Obsidian CSS variables and updates automatically on theme changes.
 - **Never overwrite `data.json`:** This file in the Obsidian plugin directory stores user settings and must not be touched during deployment.
