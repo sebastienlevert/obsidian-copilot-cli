@@ -1,6 +1,7 @@
 # Build output
 main.js
 styles.css
+obsidian-mcp-server.mjs
 
 # Node
 node_modules/

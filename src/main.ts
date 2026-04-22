@@ -5,11 +5,13 @@ import { VIEW_TYPE_COPILOT, ICON_COPILOT, COPILOT_ICON_SVG, DEFAULT_SETTINGS, VA
 import type { CopilotSettings, Placement } from "./constants";
 import { ContextProvider } from "./ContextProvider";
 import { ContextWriter } from "./ContextWriter";
+import { McpRegistrar } from "./McpRegistrar";
 
 export default class CopilotPlugin extends Plugin {
   settings: CopilotSettings = { ...DEFAULT_SETTINGS };
   contextProvider: ContextProvider | null = null;
   contextWriter: ContextWriter | null = null;
+  private mcpRegistrar: McpRegistrar | null = null;
   private vaultStructureInterval: ReturnType<typeof setInterval> | null = null;
 
   async onload(): Promise<void> {
@@ -32,6 +34,12 @@ export default class CopilotPlugin extends Plugin {
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
     this.contextProvider = new ContextProvider(this.app, this.settings);
     this.contextWriter = new ContextWriter(this.contextProvider, this.settings, vaultPath);
+
+    // Register MCP server so Copilot CLI can discover Obsidian as an IDE
+    const pathMod = require("path") as typeof import("path");
+    const pluginDir = pathMod.join(vaultPath, this.manifest.dir);
+    this.mcpRegistrar = new McpRegistrar(vaultPath, pluginDir);
+    this.mcpRegistrar.register();
 
     // Refresh vault structure cache periodically
     this.vaultStructureInterval = setInterval(() => {

@@ -140,6 +140,13 @@ export class ContextWriter {
       const tmpPath = instructionsPath + ".tmp";
       fs.writeFileSync(tmpPath, content, "utf-8");
       fs.renameSync(tmpPath, instructionsPath);
+
+      // Also write JSON state file for MCP server
+      const statePath = path.join(githubDir, "obsidian-state.json");
+      const stateJson = JSON.stringify(this.provider.generateStateJson(), null, 2);
+      const stateTmpPath = statePath + ".tmp";
+      fs.writeFileSync(stateTmpPath, stateJson, "utf-8");
+      fs.renameSync(stateTmpPath, statePath);
     } catch (e) {
       console.error("Copilot CLI: Failed to write context instructions", e);
     }
@@ -152,6 +159,7 @@ export class ContextWriter {
   private ensureGitignore(fs: typeof import("fs"), path: typeof import("path")): void {
     const gitignorePath = path.join(this.vaultPath, ".gitignore");
     const entry = ".github/copilot-instructions.md";
+    const stateEntry = ".github/obsidian-state.json";
 
     try {
       let content = "";
@@ -159,16 +167,21 @@ export class ContextWriter {
         content = fs.readFileSync(gitignorePath, "utf-8");
       }
 
-      // Check if already present (exact line match)
       const lines = content.split(/\r?\n/);
-      if (lines.some((line) => line.trim() === entry)) {
-        return;
+      const entriesToAdd: string[] = [];
+      if (!lines.some((line) => line.trim() === entry)) {
+        entriesToAdd.push(entry);
+      }
+      if (!lines.some((line) => line.trim() === stateEntry)) {
+        entriesToAdd.push(stateEntry);
       }
 
-      // Append the entry
+      if (entriesToAdd.length === 0) return;
+
+      // Append the entries
       const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
       const comment = "# Auto-generated Obsidian IDE context for Copilot CLI";
-      fs.appendFileSync(gitignorePath, `${separator}${comment}\n${entry}\n`, "utf-8");
+      fs.appendFileSync(gitignorePath, `${separator}${comment}\n${entriesToAdd.join("\n")}\n`, "utf-8");
     } catch (e) {
       console.warn("Copilot CLI: Could not update .gitignore", e);
     }

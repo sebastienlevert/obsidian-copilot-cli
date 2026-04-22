@@ -43,6 +43,23 @@ if (dev) {
   await context.rebuild();
   await context.dispose();
 
+  // Build MCP server as a standalone bundle
+  await esbuild.build({
+    entryPoints: ["src/mcp-server/index.ts"],
+    bundle: true,
+    format: "esm",
+    target: "es2020",
+    platform: "node",
+    outfile: "obsidian-mcp-server.mjs",
+    banner: {
+      js: `/* Obsidian MCP Server for GitHub Copilot CLI */`,
+    },
+    minify: true,
+    treeShaking: true,
+    external: [...builtinModules.map((m) => `node:${m}`), ...builtinModules],
+  });
+  console.log("Built obsidian-mcp-server.mjs");
+
   // Copy styles.css to root (Obsidian loads this separately for global styles)
   copyFileSync("src/styles.css", "styles.css");
   console.log("Copied styles.css to root");

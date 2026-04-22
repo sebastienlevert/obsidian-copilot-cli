@@ -1,9 +1,29 @@
 /* Obsidian Copilot — Terminal Styles */
 
+/* Remove Obsidian's default padding on the view content area */
+.workspace-leaf-content:has(.copilot-terminal-container) {
+  padding: 0 !important;
+}
+
+/* Hide the view header action buttons that steal vertical space */
+.workspace-leaf-content:has(.copilot-terminal-container) .view-header {
+  display: none !important;
+}
+
+/* When Obsidian hides the header, the content area should fill everything */
+.workspace-leaf-content:has(.copilot-terminal-container) .view-content {
+  height: 100% !important;
+  padding: 0 !important;
+}
+
 .copilot-terminal-container {
-  height: 100%;
-  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   padding: 0;
+  margin: 0;
   overflow: hidden;
   background-color: var(--background-primary);
 }
@@ -12,6 +32,7 @@
   height: 100%;
   width: 100%;
   padding: 0;
+  margin: 0;
   box-sizing: border-box;
 }
 
@@ -19,6 +40,7 @@
 .copilot-terminal-wrapper .xterm {
   height: 100%;
   width: 100%;
+  padding: 0 0 0 6px;
 }
 
 .copilot-terminal-wrapper .xterm-viewport {
