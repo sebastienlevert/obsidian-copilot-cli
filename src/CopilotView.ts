@@ -20,6 +20,7 @@ export class CopilotView extends ItemView {
   private restartPending = false;
   private plugin: CopilotPlugin;
   private lastActiveFile: string | null = null;
+  private inputBuffer: string = ""; // tracks current line input to detect commands like /clear
   private themeMutationObserver: MutationObserver | null = null;
   private documentKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private terminalWrapper: HTMLElement | null = null;
@@ -350,6 +351,19 @@ export class CopilotView extends ItemView {
           this.restart();
           return;
         }
+        // Track input to detect /clear command
+        if (data === "\r" || data === "\n") {
+          const cmd = this.inputBuffer.trim();
+          if (cmd === "/clear") {
+            this.onClearCommand();
+          }
+          this.inputBuffer = "";
+        } else if (data === "\x7f" || data === "\b") {
+          // Backspace
+          this.inputBuffer = this.inputBuffer.slice(0, -1);
+        } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+          this.inputBuffer += data;
+        }
         this.childProc?.stdin?.write(data);
       });
 
@@ -374,6 +388,16 @@ export class CopilotView extends ItemView {
           "  2. Ensure conpty-bridge.exe exists in the plugin folder\r\n" +
           "  3. Restart Obsidian after making changes\x1b[0m\r\n"
       );
+    }
+  }
+
+  /** Handle /clear command — generate a new session ID so we don't resume the old conversation */
+  private async onClearCommand(): Promise<void> {
+    if (this.plugin.settings.persistentSession) {
+      const crypto = require("crypto") as typeof import("crypto");
+      this.plugin.settings.sessionId = crypto.randomUUID();
+      await this.plugin.saveSettings();
+      console.log(`Copilot CLI: /clear detected — new session ID: ${this.plugin.settings.sessionId}`);
     }
   }
 
