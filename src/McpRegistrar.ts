@@ -51,9 +51,9 @@ export class McpRegistrar {
         config.mcpServers = {};
       }
 
-      // Set/update the obsidian server entry
+      // Set/update the obsidian server entry (type "local" matches Copilot CLI expectations)
       config.mcpServers.obsidian = {
-        type: "stdio",
+        type: "local",
         command: "node",
         args: [mcpServerPath],
         env: {
