@@ -11,6 +11,9 @@ export class ContextProvider {
   private cachedVaultStructure: string = "";
   private vaultStructureDirty = true;
 
+  // Persists last non-empty selection so it survives editor blur (e.g. clicking terminal)
+  private lastSelection: { text: string; startLine: number; startCh: number; endLine: number; endCh: number; file: string } | null = null;
+
   constructor(app: App, settings: CopilotSettings) {
     this.app = app;
     this.settings = settings;
@@ -23,6 +26,11 @@ export class ContextProvider {
   /** Mark vault structure cache as stale (called on file create/delete/rename) */
   invalidateVaultStructure(): void {
     this.vaultStructureDirty = true;
+  }
+
+  /** Clear the cached selection (e.g. when a new file is opened) */
+  clearCachedSelection(): void {
+    this.lastSelection = null;
   }
 
   /** Generate the full context markdown for copilot-instructions.md */
@@ -136,26 +144,52 @@ export class ContextProvider {
     return lines.join("\n");
   }
 
-  /** Get current editor selection */
+  /** Get current editor selection (falls back to last non-empty selection) */
   private getSelectionContext(): string | null {
     const editor = this.app.workspace.activeEditor?.editor;
-    if (!editor) return null;
+    const activeFile = this.app.workspace.getActiveFile();
 
-    const selection = editor.getSelection();
-    if (!selection || selection.trim().length === 0) return null;
+    // Try live selection first
+    let selectionText: string | null = null;
+    if (editor) {
+      const live = editor.getSelection();
+      if (live && live.trim().length > 0) {
+        const from = editor.getCursor("from");
+        const to = editor.getCursor("to");
+        this.lastSelection = {
+          text: live,
+          startLine: from.line + 1,
+          startCh: from.ch,
+          endLine: to.line + 1,
+          endCh: to.ch,
+          file: activeFile?.path || "",
+        };
+        selectionText = live;
+      }
+    }
 
-    const truncated = selection.length > 2000;
-    const displaySelection = truncated ? selection.slice(0, 2000) : selection;
+    // Fall back to cached selection
+    if (!selectionText && this.lastSelection) {
+      selectionText = this.lastSelection.text;
+    }
+
+    if (!selectionText || selectionText.trim().length === 0) return null;
+
+    const truncated = selectionText.length > 2000;
+    const displaySelection = truncated ? selectionText.slice(0, 2000) : selectionText;
 
     const lines: string[] = [];
     lines.push("## Current Selection");
+    if (this.lastSelection && selectionText === this.lastSelection.text && this.lastSelection.file) {
+      lines.push(`> In file: \`${this.lastSelection.file}\` (lines ${this.lastSelection.startLine}-${this.lastSelection.endLine})`);
+    }
     lines.push("");
     lines.push("```");
     lines.push(displaySelection);
     lines.push("```");
     if (truncated) {
       lines.push("");
-      lines.push(`> Selection truncated at 2000 chars (full: ${selection.length} chars)`);
+      lines.push(`> Selection truncated at 2000 chars (full: ${selectionText.length} chars)`);
     }
     lines.push("");
 
@@ -321,13 +355,21 @@ export class ContextProvider {
       }
     });
 
-    // Selection
+    // Selection — use live if available, fall back to cached
     let selection: Record<string, unknown> | null = null;
     if (editor) {
       const selText = editor.getSelection();
       if (selText && selText.trim().length > 0) {
         const from = editor.getCursor("from");
         const to = editor.getCursor("to");
+        this.lastSelection = {
+          text: selText,
+          startLine: from.line + 1,
+          startCh: from.ch,
+          endLine: to.line + 1,
+          endCh: to.ch,
+          file: file?.path || "",
+        };
         selection = {
           text: selText.length > 5000 ? selText.slice(0, 5000) : selText,
           startLine: from.line + 1,
@@ -336,6 +378,15 @@ export class ContextProvider {
           endCh: to.ch,
         };
       }
+    }
+    if (!selection && this.lastSelection) {
+      selection = {
+        text: this.lastSelection.text.length > 5000 ? this.lastSelection.text.slice(0, 5000) : this.lastSelection.text,
+        startLine: this.lastSelection.startLine,
+        startCh: this.lastSelection.startCh,
+        endLine: this.lastSelection.endLine,
+        endCh: this.lastSelection.endCh,
+      };
     }
 
     // Metadata

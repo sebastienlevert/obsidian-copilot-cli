@@ -121,6 +121,8 @@ export class CopilotView extends ItemView {
       if (leaf?.view?.getViewType() === "markdown") {
         const file = this.app.workspace.getActiveFile();
         if (file) this.lastActiveFile = file.path;
+        // Clear cached selection when switching files so stale selections don't persist
+        this.plugin.contextProvider?.clearCachedSelection();
         this.plugin.contextWriter?.scheduleWrite();
       }
     });
