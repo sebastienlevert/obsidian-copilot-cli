@@ -308,8 +308,8 @@ export class CopilotView extends ItemView {
 
     const settings = this.plugin.settings;
     const cwd = settings.workingDirectory === "vault" ? vaultPath : settings.workingDirectory;
-    const resumeFlag = settings.persistentSession && settings.sessionId
-      ? ` --resume=${settings.sessionId}`
+    const resumeFlag = settings.persistentSession && this.plugin.getMachineSessionId()
+      ? ` --resume=${this.plugin.getMachineSessionId()}`
       : "";
     const cmd = `copilot ${settings.copilotFlags}${resumeFlag}`.trim();
 
@@ -395,9 +395,9 @@ export class CopilotView extends ItemView {
   private async onClearCommand(): Promise<void> {
     if (this.plugin.settings.persistentSession) {
       const crypto = require("crypto") as typeof import("crypto");
-      this.plugin.settings.sessionId = crypto.randomUUID();
+      this.plugin.setMachineSessionId(crypto.randomUUID());
       await this.plugin.saveSettings();
-      console.log(`Copilot CLI: /clear detected — new session ID: ${this.plugin.settings.sessionId}`);
+      console.log(`Copilot CLI: /clear detected — new session ID: ${this.plugin.getMachineSessionId()}`);
     }
   }
 

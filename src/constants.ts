@@ -17,8 +17,10 @@ export interface CopilotSettings {
   workingDirectory: string;
   /** Always resume the same Copilot session */
   persistentSession: boolean;
-  /** Auto-generated session UUID (stored on first use) */
+  /** @deprecated Use machineSessionIds instead. Kept for backward compat / migration. */
   sessionId: string;
+  /** Per-machine session IDs keyed by hostname (not synced across devices) */
+  machineSessionIds: Record<string, string>;
   /** Vault folder for images pasted into the terminal */
   imagePasteFolder: string;
 }
@@ -30,5 +32,6 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   workingDirectory: "vault",
   persistentSession: true,
   sessionId: "",
+  machineSessionIds: {},
   imagePasteFolder: "copilot-images",
 };

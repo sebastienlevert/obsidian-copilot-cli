@@ -14,9 +14,12 @@ export default class CopilotPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // Generate a persistent session ID on first use
-    if (this.settings.persistentSession && !this.settings.sessionId) {
-      this.settings.sessionId = require("crypto").randomUUID();
+    // Migrate legacy sessionId → per-machine entry (idempotent)
+    this.migrateLegacySessionId();
+
+    // Generate a persistent session ID for this machine on first use
+    if (this.settings.persistentSession && !this.getMachineSessionId()) {
+      this.setMachineSessionId(require("crypto").randomUUID());
       await this.saveSettings();
     }
 
@@ -257,11 +260,39 @@ export default class CopilotPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // Ensure machineSessionIds exists (old data.json won't have it)
+    if (!this.settings.machineSessionIds) {
+      this.settings.machineSessionIds = {};
+    }
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
     this.contextProvider?.updateSettings(this.settings);
+  }
+
+  /** Machine key for per-device session IDs (lowercase hostname) */
+  private get machineKey(): string {
+    const os = require("os") as typeof import("os");
+    return os.hostname().toLowerCase();
+  }
+
+  /** Get the session ID for the current machine, or empty string if none */
+  getMachineSessionId(): string {
+    return this.settings.machineSessionIds[this.machineKey] || "";
+  }
+
+  /** Set (or rotate) the session ID for the current machine */
+  setMachineSessionId(id: string): void {
+    this.settings.machineSessionIds[this.machineKey] = id;
+  }
+
+  /** Migrate legacy sessionId into per-machine map (runs once, idempotent) */
+  private migrateLegacySessionId(): void {
+    if (this.settings.sessionId && !this.settings.machineSessionIds[this.machineKey]) {
+      this.settings.machineSessionIds[this.machineKey] = this.settings.sessionId;
+      // Leave legacy sessionId in place for backward compat with older plugin versions
+    }
   }
 
   onunload(): void {

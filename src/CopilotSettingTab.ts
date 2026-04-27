@@ -85,8 +85,8 @@ export class CopilotSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.persistentSession)
           .onChange(async (value) => {
             this.plugin.settings.persistentSession = value;
-            if (value && !this.plugin.settings.sessionId) {
-              this.plugin.settings.sessionId = require("crypto").randomUUID();
+            if (value && !this.plugin.getMachineSessionId()) {
+              this.plugin.setMachineSessionId(require("crypto").randomUUID());
             }
             await this.plugin.saveSettings();
           })
