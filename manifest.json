@@ -1,7 +1,7 @@
 {
   "id": "copilot-cli",
   "name": "Copilot CLI",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "minAppVersion": "1.5.0",
   "description": "Embeds GitHub Copilot CLI as an interactive terminal inside Obsidian with automatic file context awareness.",
   "author": "Sébastien Levert",

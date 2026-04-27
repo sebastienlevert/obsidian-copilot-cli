@@ -93,7 +93,7 @@ export class CopilotView extends ItemView {
 
     // Delay fit to allow DOM layout to settle, then spawn
     requestAnimationFrame(() => {
-      this.fitAddon?.fit();
+      this.fitTerminal();
       this.spawnCopilot();
     });
 
@@ -282,11 +282,25 @@ export class CopilotView extends ItemView {
     }
   }
 
+  /**
+   * Fit the terminal to its container, reducing rows by 1 to prevent the
+   * Copilot CLI TUI from rendering an extra separator line at the bottom.
+   * The FitAddon can over-count rows due to subpixel rounding in embedded
+   * contexts like Obsidian.
+   */
+  private fitTerminal(): void {
+    if (!this.fitAddon || !this.terminal) return;
+    const dims = this.fitAddon.proposeDimensions();
+    if (dims) {
+      this.terminal.resize(dims.cols, Math.max(1, dims.rows - 1));
+    }
+  }
+
   /** Refit the xterm canvas and send resize to the PTY relay */
   private handleResize(): void {
     if (!this.fitAddon || !this.terminal) return;
     try {
-      this.fitAddon.fit();
+      this.fitTerminal();
       if (this.childProc?.stdin?.writable) {
         // ConPTY bridge resize protocol: escape sequence parsed by the Rust binary
         this.childProc.stdin.write(`\x1b]resize;${this.terminal.cols};${this.terminal.rows}\x07`);
