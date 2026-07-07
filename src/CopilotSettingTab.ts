@@ -61,6 +61,21 @@ export class CopilotSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Copilot executable path")
+      .setDesc(
+        "Optional. Absolute path to the copilot launcher (e.g. copilot.cmd). Leave blank to auto-detect. Set this if launching fails with 'copilot is not recognized'."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("auto-detect")
+          .setValue(this.plugin.settings.copilotPath)
+          .onChange(async (value) => {
+            this.plugin.settings.copilotPath = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Working directory")
       .setDesc("'vault' uses the vault root, or enter a custom absolute path")
       .addText((text) =>

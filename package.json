@@ -1,6 +1,6 @@
 {
   "name": "copilot-cli",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "GitHub Copilot CLI terminal integration for Obsidian",
   "main": "main.js",
   "scripts": {

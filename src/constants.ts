@@ -13,6 +13,8 @@ export interface CopilotSettings {
   autoOpen: boolean;
   /** CLI flags passed to copilot */
   copilotFlags: string;
+  /** Optional absolute path to the copilot executable (overrides auto-detection) */
+  copilotPath: string;
   /** Working directory — "vault" or a custom path */
   workingDirectory: string;
   /** Always resume the same Copilot session */
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   defaultPlacement: "right",
   autoOpen: true,
   copilotFlags: "--yolo --banner",
+  copilotPath: "",
   workingDirectory: "vault",
   persistentSession: true,
   sessionId: "",

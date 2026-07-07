@@ -5,6 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 
 import { VIEW_TYPE_COPILOT } from "./constants";
 import type CopilotPlugin from "./main";
+import { resolveCopilot } from "./resolveCopilot";
 
 // xterm.js CSS (injected at runtime)
 import xtermCss from "@xterm/xterm/css/xterm.css";
@@ -314,23 +315,65 @@ export class CopilotView extends ItemView {
   private spawnCopilot(): void {
     if (!this.terminal) return;
 
-    const { spawn } = require("child_process") as typeof import("child_process");
-    const path = require("path") as typeof import("path");
-    const vaultPath = (this.app.vault.adapter as any).basePath as string;
-    const pluginDir = path.join(vaultPath, this.plugin.manifest.dir);
-    const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
-
-    const settings = this.plugin.settings;
-    const cwd = settings.workingDirectory === "vault" ? vaultPath : settings.workingDirectory;
-    const resumeFlag = settings.persistentSession && this.plugin.getMachineSessionId()
-      ? ` --resume=${this.plugin.getMachineSessionId()}`
-      : "";
-    const cmd = `copilot ${settings.copilotFlags}${resumeFlag}`.trim();
-
-    // Build the full shell command for ConPTY
-    const shellCmd = `powershell.exe -NoLogo -NoProfile -Command ${cmd}`;
-
     try {
+      const { spawn } = require("child_process") as typeof import("child_process");
+      const path = require("path") as typeof import("path");
+      const vaultPath = (this.app.vault.adapter as any).basePath as string;
+      const pluginDir = path.join(vaultPath, this.plugin.manifest.dir);
+      const bridgePath = path.join(pluginDir, "conpty-bridge.exe");
+
+      const settings = this.plugin.settings;
+      const cwd = settings.workingDirectory === "vault" ? vaultPath : settings.workingDirectory;
+      const resumeFlag = settings.persistentSession && this.plugin.getMachineSessionId()
+        ? ` --resume=${this.plugin.getMachineSessionId()}`
+        : "";
+
+      // Obsidian launched from the GUI often inherits a PATH that lacks the npm
+      // global bin directory (common with nvm / non-standard Node installs), so a
+      // bare `copilot` fails with "not recognized". Prepend the discovered Node /
+      // npm-global directories to PATH so a bare `copilot` resolves (and so the
+      // `node` it shells out to is found). Fall back to an absolute launcher path
+      // only when the command still isn't resolvable via PATH.
+      const resolved = resolveCopilot(settings.copilotPath);
+      const useAbsolute = resolved.resolved && !!settings.copilotPath?.trim();
+      const copilotInvocation = useAbsolute
+        ? `& '${resolved.command.replace(/'/g, "''")}'`
+        : "copilot";
+      if (!resolved.resolved) {
+        console.warn(
+          "Copilot CLI: could not locate the copilot executable in known Node/npm locations; " +
+            "falling back to PATH lookup. Set an explicit path in settings if launching fails."
+        );
+      }
+      const cmd = `${copilotInvocation} ${settings.copilotFlags}${resumeFlag}`.trim();
+
+      // Build the full shell command for ConPTY
+      const shellCmd = `powershell.exe -NoLogo -NoProfile -Command ${cmd}`;
+
+      // Prepend discovered Node directories to PATH (case-insensitive key on Win).
+      const baseEnv = { ...(process.env as Record<string, string>) };
+      const pathKey =
+        Object.keys(baseEnv).find((k) => k.toLowerCase() === "path") || "PATH";
+      const existingPath = baseEnv[pathKey] || "";
+      const mergedPath = [...resolved.extraPathDirs, existingPath]
+        .filter(Boolean)
+        .join(path.delimiter);
+
+      const fs = require("fs") as typeof import("fs");
+      if (!fs.existsSync(bridgePath)) {
+        this.terminal.write(
+          `\x1b[31mConPTY bridge not found:\x1b[0m ${bridgePath}\r\n` +
+            "\x1b[90mReinstall the plugin or rebuild the bridge.\x1b[0m\r\n"
+        );
+        return;
+      }
+
+      // Dim startup trace so a failed launch is never a silent blank pane.
+      const resumeHint = resumeFlag
+        ? " \x1b[90m(resuming your saved session — this can take several seconds)\x1b[0m"
+        : "";
+      this.terminal.write(`\x1b[90m$ ${cmd}\x1b[0m${resumeHint}\r\n`);
+
       this.childProc = spawn(bridgePath, [
         String(this.terminal.cols),
         String(this.terminal.rows),
@@ -339,7 +382,8 @@ export class CopilotView extends ItemView {
       ], {
         cwd: cwd,
         env: {
-          ...process.env as Record<string, string>,
+          ...baseEnv,
+          [pathKey]: mergedPath,
           TERM: "xterm-256color",
           COLORTERM: "truecolor",
           PENSIEVE_ACTIVE_FILE: this.lastActiveFile || "",
@@ -398,9 +442,10 @@ export class CopilotView extends ItemView {
       );
       this.terminal.write(
         "\x1b[90mTroubleshooting:\r\n" +
-          "  1. Ensure GitHub Copilot CLI is installed (copilot in PATH)\r\n" +
-          "  2. Ensure conpty-bridge.exe exists in the plugin folder\r\n" +
-          "  3. Restart Obsidian after making changes\x1b[0m\r\n"
+          "  1. Ensure GitHub Copilot CLI is installed (npm install -g @github/copilot)\r\n" +
+          "  2. If Node is managed via nvm, set 'Copilot executable path' in settings\r\n" +
+          "  3. Ensure conpty-bridge.exe exists in the plugin folder\r\n" +
+          "  4. Restart Obsidian after making changes\x1b[0m\r\n"
       );
     }
   }
