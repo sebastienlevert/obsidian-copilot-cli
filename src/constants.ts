@@ -27,6 +27,8 @@ export interface CopilotSettings {
   imagePasteFolder: string;
   /** Enable the native IDE server so the CLI's /ide can see the active file/selection */
   enableIdeIntegration: boolean;
+  /** Automatically run /ide when the terminal starts, so the CLI connects to Obsidian */
+  autoConnectIde: boolean;
 }
 
 export const DEFAULT_SETTINGS: CopilotSettings = {
@@ -40,4 +42,5 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   machineSessionIds: {},
   imagePasteFolder: "copilot-images",
   enableIdeIntegration: true,
+  autoConnectIde: true,
 };

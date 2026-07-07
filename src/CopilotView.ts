@@ -25,6 +25,11 @@ export class CopilotView extends ItemView {
   private themeMutationObserver: MutationObserver | null = null;
   private documentKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private terminalWrapper: HTMLElement | null = null;
+  // Auto-connect /ide once copilot startup settles (see maybeAutoConnectIde)
+  private ideAutoConnectSent = false;
+  private ideAutoConnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private ideAutoConnectMaxTimer: ReturnType<typeof setTimeout> | null = null;
+  private userHasTyped = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: CopilotPlugin) {
     super(leaf);
@@ -315,6 +320,12 @@ export class CopilotView extends ItemView {
   private spawnCopilot(): void {
     if (!this.terminal) return;
 
+    // Reset per-spawn auto-connect state
+    this.ideAutoConnectSent = false;
+    this.userHasTyped = false;
+    if (this.ideAutoConnectTimer) { clearTimeout(this.ideAutoConnectTimer); this.ideAutoConnectTimer = null; }
+    if (this.ideAutoConnectMaxTimer) { clearTimeout(this.ideAutoConnectMaxTimer); this.ideAutoConnectMaxTimer = null; }
+
     try {
       const { spawn } = require("child_process") as typeof import("child_process");
       const path = require("path") as typeof import("path");
@@ -393,6 +404,7 @@ export class CopilotView extends ItemView {
       // relay stdout -> xterm
       this.childProc.stdout?.on("data", (data: Buffer) => {
         this.terminal?.write(data.toString("utf-8"));
+        this.scheduleIdeAutoConnect();
       });
 
       // relay stderr -> xterm
@@ -407,6 +419,8 @@ export class CopilotView extends ItemView {
           this.restart();
           return;
         }
+        // Any real user input cancels pending auto-/ide so we never interrupt typing
+        this.userHasTyped = true;
         // Track input to detect /clear command
         if (data === "\r" || data === "\n") {
           const cmd = this.inputBuffer.trim();
@@ -434,6 +448,11 @@ export class CopilotView extends ItemView {
       this.childProc.on("error", (err: Error) => {
         this.terminal?.write(`\x1b[31mProcess error: ${err.message}\x1b[0m\r\n`);
       });
+
+      // Fallback: auto-connect /ide even if copilot output never fully settles.
+      if (this.plugin.settings.enableIdeIntegration && this.plugin.settings.autoConnectIde) {
+        this.ideAutoConnectMaxTimer = setTimeout(() => this.sendIdeAutoConnect(), 30000);
+      }
     } catch (e: any) {
       this.terminal.write(
         `\x1b[31mFailed to start Copilot CLI: ${e.message}\x1b[0m\r\n\r\n`
@@ -446,6 +465,34 @@ export class CopilotView extends ItemView {
           "  4. Restart Obsidian after making changes\x1b[0m\r\n"
       );
     }
+  }
+
+  /**
+   * Auto-connect the CLI to Obsidian's IDE server by sending `/ide` once copilot
+   * has started and its output has settled (startup/resume finished). The CLI's
+   * native startup auto-connect is skipped when a session is resumed (`--resume`),
+   * so we replicate the user's manual `/ide` — which is not subject to that gate.
+   * Debounced on output: fires only after ~2.5s of no output, and never if the
+   * user has already started typing.
+   */
+  private scheduleIdeAutoConnect(): void {
+    const s = this.plugin.settings;
+    if (!s.enableIdeIntegration || !s.autoConnectIde) return;
+    if (this.ideAutoConnectSent || this.userHasTyped) return;
+    if (this.ideAutoConnectTimer) clearTimeout(this.ideAutoConnectTimer);
+    this.ideAutoConnectTimer = setTimeout(() => this.sendIdeAutoConnect(), 2500);
+  }
+
+  /** Actually send the `/ide` command to the PTY (guarded, one-shot). */
+  private sendIdeAutoConnect(): void {
+    if (this.ideAutoConnectTimer) { clearTimeout(this.ideAutoConnectTimer); this.ideAutoConnectTimer = null; }
+    if (this.ideAutoConnectMaxTimer) { clearTimeout(this.ideAutoConnectMaxTimer); this.ideAutoConnectMaxTimer = null; }
+    const s = this.plugin.settings;
+    if (!s.enableIdeIntegration || !s.autoConnectIde) return;
+    if (this.ideAutoConnectSent || this.userHasTyped) return;
+    if (!this.childProc?.stdin?.writable) return;
+    this.ideAutoConnectSent = true;
+    this.childProc.stdin.write("/ide\r");
   }
 
   /** Handle /clear command — generate a new session ID so we don't resume the old conversation */
@@ -479,6 +526,8 @@ export class CopilotView extends ItemView {
   }
 
   private killProcess(): void {
+    if (this.ideAutoConnectTimer) { clearTimeout(this.ideAutoConnectTimer); this.ideAutoConnectTimer = null; }
+    if (this.ideAutoConnectMaxTimer) { clearTimeout(this.ideAutoConnectMaxTimer); this.ideAutoConnectMaxTimer = null; }
     if (this.childProc) {
       try {
         this.childProc.kill();

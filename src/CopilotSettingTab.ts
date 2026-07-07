@@ -105,6 +105,20 @@ export class CopilotSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("Auto-connect IDE on start")
+      .setDesc(
+        "Automatically run /ide when the terminal starts so the CLI connects to Obsidian without typing it. Only applies when IDE integration is on."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.autoConnectIde)
+          .onChange(async (value) => {
+            this.plugin.settings.autoConnectIde = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
     containerEl.createEl("h2", { text: "Session" });
 
     new Setting(containerEl)
