@@ -329,14 +329,12 @@ export class CopilotView extends ItemView {
         : "";
 
       // Obsidian launched from the GUI often inherits a PATH that lacks the npm
-      // global bin directory (common with nvm / non-standard Node installs), so a
-      // bare `copilot` fails with "not recognized". Prepend the discovered Node /
-      // npm-global directories to PATH so a bare `copilot` resolves (and so the
-      // `node` it shells out to is found). Fall back to an absolute launcher path
-      // only when the command still isn't resolvable via PATH.
+      // global bin directory (common with nvm / fnm / non-standard Node installs),
+      // so a bare `copilot` fails with "not recognized". Resolve the launcher's
+      // absolute path and prepend the discovered Node / npm-global directories to
+      // PATH so the launcher and the `node` it shells out to are both found.
       const resolved = resolveCopilot(settings.copilotPath);
-      const useAbsolute = resolved.resolved && !!settings.copilotPath?.trim();
-      const copilotInvocation = useAbsolute
+      const copilotInvocation = resolved.resolved
         ? `& '${resolved.command.replace(/'/g, "''")}'`
         : "copilot";
       if (!resolved.resolved) {

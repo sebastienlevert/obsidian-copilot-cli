@@ -62,6 +62,92 @@ function versionSubdirs(dir: string): string[] {
   }
 }
 
+/** Return subdirectories of `dir` sorted by modification time, newest first. */
+function newestDirsByMtime(dir: string): string[] {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .map((e) => path.join(dir, e.name))
+      .map((p) => {
+        let mtime = 0;
+        try {
+          mtime = fs.statSync(p).mtimeMs;
+        } catch {
+          // broken junction / removed target — keep at the bottom
+        }
+        return { p, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .map((x) => x.p);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * fnm (Fast Node Manager) installs Node under <fnmDir>/node-versions/<v>/
+ * installation and injects a per-shell shim directory (multishell) into PATH
+ * only inside the active shell. When Obsidian is launched from the GUI, that
+ * shim dir is NOT on PATH, so we resolve fnm's stable installation dirs (and,
+ * as a fallback, the per-session multishell dirs) directly.
+ */
+function fnmDirs(): string[] {
+  const dirs: string[] = [];
+  const env = process.env;
+  const home = os.homedir();
+  const push = (d: string | undefined | null) => {
+    if (d && !dirs.includes(d)) dirs.push(d);
+  };
+  // On Windows the shims/node live directly in the installation dir; on POSIX
+  // under installation/bin (or <multishell>/bin).
+  const binOf = (d: string) => (isWindows ? d : path.join(d, "bin"));
+
+  // 1. Active multishell, if `fnm env` happened to be inherited (most precise).
+  if (env.FNM_MULTISHELL_PATH) push(binOf(env.FNM_MULTISHELL_PATH));
+
+  // 2. Candidate fnm root directories.
+  const roots: string[] = [];
+  const pushRoot = (d: string | undefined | null) => {
+    if (d && !roots.includes(d)) roots.push(d);
+  };
+  pushRoot(env.FNM_DIR);
+  if (isWindows) {
+    pushRoot(env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "fnm"));
+    pushRoot(env.APPDATA && path.join(env.APPDATA, "fnm"));
+  } else {
+    pushRoot(env.XDG_DATA_HOME && path.join(env.XDG_DATA_HOME, "fnm"));
+    pushRoot(path.join(home, ".local", "share", "fnm"));
+  }
+  pushRoot(path.join(home, ".fnm"));
+
+  for (const root of roots) {
+    // The `default` alias points at the user's default Node version.
+    push(binOf(path.join(root, "aliases", "default", "installation")));
+    push(binOf(path.join(root, "aliases", "default")));
+    // All installed versions, newest first.
+    for (const v of versionSubdirs(path.join(root, "node-versions"))) {
+      push(binOf(path.join(v, "installation")));
+    }
+  }
+
+  // 3. Per-session multishell dirs (symlinks to an installation). Names are
+  //    <pid>_<timestamp> and change per session and accumulate over time, so
+  //    only consider the few most-recently-used to keep PATH small.
+  const multishellRoots = isWindows
+    ? [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "fnm_multishells")]
+    : [
+        env.XDG_STATE_HOME && path.join(env.XDG_STATE_HOME, "fnm_multishells"),
+        path.join(home, ".local", "state", "fnm_multishells"),
+      ];
+  for (const mr of multishellRoots) {
+    if (!mr) continue;
+    for (const d of newestDirsByMtime(mr).slice(0, 5)) push(binOf(d));
+  }
+
+  return dirs;
+}
+
 /** Read a `prefix=` line from the user's ~/.npmrc, if present. */
 function npmrcPrefix(): string | undefined {
   try {
@@ -101,6 +187,9 @@ function candidateDirs(): string[] {
   for (const prefix of [env.npm_config_prefix, npmrcPrefix()]) {
     if (prefix) for (const b of prefixBinDirs(prefix)) push(b);
   }
+
+  // fnm (Fast Node Manager) — stable installation dirs + per-session shims.
+  for (const d of fnmDirs()) push(d);
 
   if (isWindows) {
     // nvm-windows exposes the active version via NVM_SYMLINK (usually
