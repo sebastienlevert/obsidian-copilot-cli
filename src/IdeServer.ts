@@ -25,6 +25,8 @@ export class IdeServer {
   private running = false;
   private lastActiveFile: string | null = null; // vault-relative path of last active markdown file
   private lockFileDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSelectionSignature: string | null = null;
 
   constructor(app: App, contextProvider: ContextProvider, vaultPath: string) {
     this.app = app;
@@ -36,13 +38,13 @@ export class IdeServer {
   notifyActiveFile(filePath: string | null): void {
     if (filePath) this.lastActiveFile = filePath;
     this.updateLockFile();
-    this.pushSseNotification();
+    this.scheduleSelectionPush();
   }
 
   /** Called by plugin on editor-change (selection/cursor change) */
   notifySelectionChange(): void {
     this.updateLockFile();
-    this.pushSseNotification();
+    this.scheduleSelectionPush();
   }
 
   /** Update the lock file with current file context (debounced) */
@@ -99,19 +101,59 @@ export class IdeServer {
     } catch {}
   }
 
-  /** Push notifications to all connected SSE clients */
-  private pushSseNotification(): void {
+  /** Debounced push of the current selection to connected CLIs (~200ms). */
+  private scheduleSelectionPush(): void {
+    if (this.pushDebounceTimer) clearTimeout(this.pushDebounceTimer);
+    this.pushDebounceTimer = setTimeout(() => this.pushSelectionChanged(), 200);
+  }
+
+  /** Send a JSON-RPC notification to all connected SSE clients. */
+  private pushJsonRpcNotification(method: string, params: unknown): void {
     if (this.sseClients.size === 0) return;
-    // Send both tools and resources list_changed to cover all CLI behaviors
-    const notifications = [
-      JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }),
-      JSON.stringify({ jsonrpc: "2.0", method: "notifications/resources/list_changed" }),
-    ];
+    const frame = `data: ${JSON.stringify({ jsonrpc: "2.0", method, params })}\n\n`;
     for (const res of this.sseClients) {
-      for (const n of notifications) {
-        try { res.write(`data: ${n}\n\n`); } catch {}
-      }
+      try { res.write(frame); } catch {}
     }
+  }
+
+  /**
+   * Push the current active file + selection to the CLI via a `selection_changed`
+   * notification — this is what drives the CLI's current-file/selection indicator.
+   * Deduplicated so identical states aren't re-sent on every cursor tick.
+   */
+  private pushSelectionChanged(force = false): void {
+    if (this.sseClients.size === 0) return;
+    const payload = this.buildSelectionPayload();
+    if (!payload) return;
+    const s = payload.selection;
+    const sig = `${payload.filePath}:${s.start.line}:${s.start.character}:${s.end.line}:${s.end.character}:${s.isEmpty}`;
+    if (!force && sig === this.lastSelectionSignature) return;
+    this.lastSelectionSignature = sig;
+    this.pushJsonRpcNotification("selection_changed", payload);
+  }
+
+  /**
+   * Explicitly attach the current selection (or active file) to the CLI chat input
+   * via the `add_selection` / `add_file_reference` notifications the CLI listens for.
+   * Returns true if a CLI was connected to receive it.
+   */
+  pushAddSelection(): boolean {
+    if (this.sseClients.size === 0) return false;
+    const p = this.buildSelectionPayload();
+    if (!p) return false;
+    const hasSelection = !p.selection.isEmpty;
+    this.pushJsonRpcNotification(hasSelection ? "add_selection" : "add_file_reference", {
+      filePath: p.filePath,
+      fileUrl: p.fileUrl,
+      selection: hasSelection ? { start: p.selection.start, end: p.selection.end } : null,
+      selectedText: hasSelection ? p.text : null,
+    });
+    return true;
+  }
+
+  /** True if at least one CLI has an open notification (SSE) stream. */
+  isConnected(): boolean {
+    return this.sseClients.size > 0;
   }
 
   /** Get the active markdown file, searching all leaves if needed */
@@ -128,6 +170,88 @@ export class IdeServer {
       }
     });
     return found;
+  }
+
+  /**
+   * Build the `selection_changed` payload (0-based lines) from the active markdown
+   * editor. Returns null only when no file context is available at all.
+   */
+  private buildSelectionPayload(): {
+    text: string;
+    filePath: string;
+    fileUrl: string;
+    selection: {
+      start: { line: number; character: number };
+      end: { line: number; character: number };
+      isEmpty: boolean;
+    };
+    current: boolean;
+  } | null {
+    let editor = this.app.workspace.activeEditor?.editor;
+    let file: import("obsidian").TFile | null = this.app.workspace.getActiveFile();
+    let current = true;
+
+    // If no active editor (e.g. the terminal is focused), find the most recent
+    // markdown leaf so we still report the file the user was editing.
+    if (!editor) {
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        if (!editor && leaf.view?.getViewType() === "markdown") {
+          const e = (leaf.view as any)?.editor;
+          const f = (leaf.view as any)?.file as import("obsidian").TFile | undefined;
+          if (e) {
+            editor = e;
+            if (f) file = f;
+            current = false;
+          }
+        }
+      });
+    }
+
+    // No file at all — fall back to the last known active file with empty selection.
+    if (!file) {
+      if (!this.lastActiveFile) return null;
+      const p = this.toAbsolutePath(this.lastActiveFile);
+      return {
+        text: "",
+        filePath: p,
+        fileUrl: this.toFileUrl(p),
+        selection: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, isEmpty: true },
+        current: false,
+      };
+    }
+
+    const filePath = this.toAbsolutePath(file.path);
+    const fileUrl = this.toFileUrl(filePath);
+
+    if (editor) {
+      const from = (editor as any).getCursor("from");
+      const to = (editor as any).getCursor("to");
+      const text = editor.getSelection() || "";
+      return {
+        text,
+        filePath,
+        fileUrl,
+        selection: {
+          start: { line: from.line, character: from.ch },
+          end: { line: to.line, character: to.ch },
+          isEmpty: text.length === 0,
+        },
+        current,
+      };
+    }
+
+    return {
+      text: "",
+      filePath,
+      fileUrl,
+      selection: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, isEmpty: true },
+      current: false,
+    };
+  }
+
+  /** Convert an absolute path to a file:/// URL. */
+  private toFileUrl(absPath: string): string {
+    return `file:///${absPath.replace(/\\/g, "/").replace(/^\//, "")}`;
   }
 
   /** Start the IDE server and write the lock file */
@@ -204,6 +328,11 @@ export class IdeServer {
     if (!this.running) return;
 
     const fs = require("fs") as typeof import("fs");
+
+    // Clear pending timers
+    if (this.pushDebounceTimer) { clearTimeout(this.pushDebounceTimer); this.pushDebounceTimer = null; }
+    if (this.lockFileDebounceTimer) { clearTimeout(this.lockFileDebounceTimer); this.lockFileDebounceTimer = null; }
+    this.lastSelectionSignature = null;
 
     // Close all SSE connections
     for (const res of this.sseClients) {
@@ -297,6 +426,11 @@ export class IdeServer {
       });
       res.write(":ok\n\n");
       this.sseClients.add(res);
+      // Proactively push the current selection so the CLI shows the active file
+      // immediately on connect (mirrors VS Code's PushInitialStateAsync).
+      setTimeout(() => {
+        try { this.pushSelectionChanged(true); } catch {}
+      }, 50);
       req.on("close", () => {
         this.sseClients.delete(res);
       });

@@ -1,4 +1,5 @@
 import { Plugin, addIcon, Notice, requestUrl } from "obsidian";
+import { EditorView } from "@codemirror/view";
 import { CopilotView } from "./CopilotView";
 import { CopilotSettingTab } from "./CopilotSettingTab";
 import { VIEW_TYPE_COPILOT, ICON_COPILOT, COPILOT_ICON_SVG, DEFAULT_SETTINGS } from "./constants";
@@ -54,10 +55,22 @@ export default class CopilotPlugin extends Plugin {
       }
     }));
 
-    // Notify IDE server on editor changes (cursor/selection moves)
+    // Notify IDE server on editor changes (document edits)
     this.registerEvent(this.app.workspace.on("editor-change" as any, () => {
       this.ideServer?.notifySelectionChange();
     }));
+
+    // Detect selection/cursor changes at the CodeMirror level. Obsidian's
+    // "editor-change" event only fires on document EDITS, not on pure text
+    // selection, so we hook CM6 directly to keep the IDE selection in sync —
+    // this is what lets the CLI show "Selection in <file>" as you highlight text.
+    this.registerEditorExtension(
+      EditorView.updateListener.of((update) => {
+        if (update.selectionSet || update.docChanged) {
+          this.ideServer?.notifySelectionChange();
+        }
+      })
+    );
 
     // Register custom Copilot icon
     addIcon(ICON_COPILOT, COPILOT_ICON_SVG);
@@ -122,6 +135,16 @@ export default class CopilotPlugin extends Plugin {
         if (!editor) return;
         const selection = editor.getSelection();
         if (!selection) return;
+        // When the CLI is connected as an IDE, send a native selection reference
+        // (the CLI inserts it as a proper attachment in its input box).
+        if (this.ideServer?.pushAddSelection()) {
+          const connectedLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_COPILOT);
+          if (connectedLeaves.length > 0) {
+            this.app.workspace.setActiveLeaf(connectedLeaves[0], { focus: true });
+            (connectedLeaves[0].view as CopilotView).focusTerminal();
+          }
+          return;
+        }
         const file = this.app.workspace.getActiveFile();
         const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_COPILOT);
         if (leaves.length === 0) {
@@ -129,7 +152,7 @@ export default class CopilotPlugin extends Plugin {
           return;
         }
         const view = leaves[0].view as CopilotView;
-        // Reference the file + paste selection so Copilot has both file context and the excerpt
+        // Fallback (no IDE connection): reference the file + paste the excerpt
         if (file) {
           view.sendInput(`@${file.path} `);
         }
