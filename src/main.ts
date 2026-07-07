@@ -35,13 +35,13 @@ export default class CopilotPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // Migrate legacy sessionId → per-machine entry (idempotent)
+    // Migrate any prior per-machine session id into the machine-local store
     this.migrateLegacySessionId();
 
-    // Generate a persistent session ID for this machine on first use
+    // Generate a persistent, machine-local session ID on first use (stored under
+    // ~/.copilot, NOT the OneDrive-synced vault, so each machine is independent)
     if (this.settings.persistentSession && !this.getMachineSessionId()) {
       this.setMachineSessionId(require("crypto").randomUUID());
-      await this.saveSettings();
     }
 
     // Ensure ConPTY bridge binary exists (downloads on first BRAT install)
@@ -317,28 +317,68 @@ export default class CopilotPlugin extends Plugin {
     this.contextProvider?.updateSettings(this.settings);
   }
 
-  /** Machine key for per-device session IDs (lowercase hostname) */
-  private get machineKey(): string {
+  /**
+   * Local (NOT OneDrive-synced) file holding per-machine session IDs, keyed by
+   * vault path. Stored under ~/.copilot (outside the synced vault) so that two
+   * machines sharing a vault via OneDrive each keep their own independent
+   * Copilot session instead of resuming the same one.
+   */
+  private get localSessionsPath(): string {
     const os = require("os") as typeof import("os");
-    return os.hostname().toLowerCase();
+    const path = require("path") as typeof import("path");
+    return path.join(os.homedir(), ".copilot", "obsidian-plugin-sessions.json");
   }
 
-  /** Get the session ID for the current machine, or empty string if none */
-  getMachineSessionId(): string {
-    return this.settings.machineSessionIds[this.machineKey] || "";
+  /** Key for this machine+vault (the file is already machine-local). */
+  private get sessionKey(): string {
+    const bp = ((this.app.vault.adapter as any).basePath as string) || "default";
+    return bp.toLowerCase();
   }
 
-  /** Set (or rotate) the session ID for the current machine */
-  setMachineSessionId(id: string): void {
-    this.settings.machineSessionIds[this.machineKey] = id;
-  }
-
-  /** Migrate legacy sessionId into per-machine map (runs once, idempotent) */
-  private migrateLegacySessionId(): void {
-    if (this.settings.sessionId && !this.settings.machineSessionIds[this.machineKey]) {
-      this.settings.machineSessionIds[this.machineKey] = this.settings.sessionId;
-      // Leave legacy sessionId in place for backward compat with older plugin versions
+  private readLocalSessions(): Record<string, string> {
+    try {
+      const fs = require("fs") as typeof import("fs");
+      const data = JSON.parse(fs.readFileSync(this.localSessionsPath, "utf-8"));
+      return data && typeof data === "object" ? data : {};
+    } catch {
+      return {};
     }
+  }
+
+  private writeLocalSessions(map: Record<string, string>): void {
+    try {
+      const fs = require("fs") as typeof import("fs");
+      const path = require("path") as typeof import("path");
+      fs.mkdirSync(path.dirname(this.localSessionsPath), { recursive: true });
+      fs.writeFileSync(this.localSessionsPath, JSON.stringify(map, null, 2), { mode: 0o600 });
+    } catch (e) {
+      console.error("Copilot CLI: failed to persist local session id", e);
+    }
+  }
+
+  /** Get the session ID for this machine+vault, or empty string if none */
+  getMachineSessionId(): string {
+    return this.readLocalSessions()[this.sessionKey] || "";
+  }
+
+  /** Set (or rotate) the session ID for this machine+vault (stored locally) */
+  setMachineSessionId(id: string): void {
+    const map = this.readLocalSessions();
+    map[this.sessionKey] = id;
+    this.writeLocalSessions(map);
+  }
+
+  /**
+   * One-time migration to the machine-local store. Migrates a prior per-hostname
+   * entry from data.json if present, but intentionally does NOT reuse the shared
+   * legacy `sessionId` — reusing it would make every OneDrive-synced machine
+   * resume the same session (the bug this replaces).
+   */
+  private migrateLegacySessionId(): void {
+    if (this.getMachineSessionId()) return; // already have a local id
+    const os = require("os") as typeof import("os");
+    const perHost = this.settings.machineSessionIds?.[os.hostname().toLowerCase()];
+    if (perHost) this.setMachineSessionId(perHost);
   }
 
   onunload(): void {
