@@ -11,6 +11,26 @@ export default class CopilotPlugin extends Plugin {
   settings: CopilotSettings = { ...DEFAULT_SETTINGS };
   contextProvider: ContextProvider | null = null;
   private ideServer: IdeServer | null = null;
+  private vaultPath: string = "";
+
+  /** Start or stop the IDE server to match the current setting (live toggle). */
+  async setIdeIntegration(enabled: boolean): Promise<void> {
+    if (enabled && !this.ideServer) {
+      this.ideServer = new IdeServer(this.app, this.contextProvider!, this.vaultPath);
+      try {
+        await this.ideServer.start();
+      } catch (e) {
+        console.error("Copilot CLI: Failed to start IDE server", e);
+      }
+    } else if (!enabled && this.ideServer) {
+      try {
+        await this.ideServer.stop();
+      } catch (e) {
+        console.error("Copilot CLI: Failed to stop IDE server", e);
+      }
+      this.ideServer = null;
+    }
+  }
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -33,13 +53,16 @@ export default class CopilotPlugin extends Plugin {
 
     // Initialize IDE context provider (selection caching for IDE server)
     const vaultPath = (this.app.vault.adapter as any).basePath as string;
+    this.vaultPath = vaultPath;
     this.contextProvider = new ContextProvider(this.app, this.settings);
 
-    // Start native IDE server so /ide command recognizes Obsidian
-    this.ideServer = new IdeServer(this.app, this.contextProvider, vaultPath);
-    this.ideServer.start().catch((e) => {
-      console.error("Copilot CLI: Failed to start IDE server", e);
-    });
+    // Start native IDE server so /ide command recognizes Obsidian (opt-out via settings)
+    if (this.settings.enableIdeIntegration) {
+      this.ideServer = new IdeServer(this.app, this.contextProvider, vaultPath);
+      this.ideServer.start().catch((e) => {
+        console.error("Copilot CLI: Failed to start IDE server", e);
+      });
+    }
 
     // Remove legacy MCP server registration (replaced by native IDE server)
     this.removeLegacyMcpRegistration();

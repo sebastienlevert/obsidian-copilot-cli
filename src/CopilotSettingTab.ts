@@ -88,6 +88,23 @@ export class CopilotSettingTab extends PluginSettingTab {
           })
       );
 
+    containerEl.createEl("h2", { text: "Integrations" });
+
+    new Setting(containerEl)
+      .setName("IDE integration")
+      .setDesc(
+        "Let the Copilot CLI's /ide command see Obsidian's active file and text selection. Turn this off if the CLI is slow to start or won't load, then reload."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableIdeIntegration)
+          .onChange(async (value) => {
+            this.plugin.settings.enableIdeIntegration = value;
+            await this.plugin.saveSettings();
+            await this.plugin.setIdeIntegration(value);
+          })
+      );
+
     containerEl.createEl("h2", { text: "Session" });
 
     new Setting(containerEl)

@@ -898,7 +898,7 @@ export class IdeServer {
     }
   }
 
-  /** Remove stale lock files from dead processes */
+  /** Remove stale lock files: dead processes AND our own prior instances. */
   private cleanStaleLockFiles(
     fs: typeof import("fs"),
     path: typeof import("path"),
@@ -912,14 +912,25 @@ export class IdeServer {
         if (!file.endsWith(".lock")) continue;
         const fullPath = path.join(ideDir, file);
 
-        // Skip our own lock file
+        // Skip our own (current) lock file
         if (fullPath === this.lockFilePath) continue;
 
         try {
           const content = JSON.parse(fs.readFileSync(fullPath, "utf-8"));
-          if (content.pid && !this.isProcessAlive(content.pid)) {
+          const deadPid = content.pid && !this.isProcessAlive(content.pid);
+          // A prior Obsidian instance for THIS vault: Obsidian can't open the
+          // same vault twice, so any other Obsidian lock pointing at our vault
+          // is stale (its pipe is dead). Removing it prevents Copilot CLI from
+          // trying to connect to a dead pipe on /ide discovery.
+          const ourStale =
+            content.ideName === "Obsidian" &&
+            Array.isArray(content.workspaceFolders) &&
+            content.workspaceFolders.includes(this.vaultPath);
+          if (deadPid || ourStale) {
             fs.unlinkSync(fullPath);
-            console.log(`Copilot CLI: Removed stale lock file for PID ${content.pid}`);
+            console.log(
+              `Copilot CLI: Removed stale lock file (${deadPid ? `dead PID ${content.pid}` : "prior Obsidian instance"})`
+            );
           }
         } catch {
           // Corrupted lock file — remove it

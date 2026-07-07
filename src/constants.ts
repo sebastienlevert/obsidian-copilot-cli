@@ -25,6 +25,8 @@ export interface CopilotSettings {
   machineSessionIds: Record<string, string>;
   /** Vault folder for images pasted into the terminal */
   imagePasteFolder: string;
+  /** Enable the native IDE server so the CLI's /ide can see the active file/selection */
+  enableIdeIntegration: boolean;
 }
 
 export const DEFAULT_SETTINGS: CopilotSettings = {
@@ -37,4 +39,5 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   sessionId: "",
   machineSessionIds: {},
   imagePasteFolder: "copilot-images",
+  enableIdeIntegration: true,
 };
