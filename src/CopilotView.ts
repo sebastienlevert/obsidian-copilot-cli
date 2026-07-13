@@ -335,8 +335,13 @@ export class CopilotView extends ItemView {
 
       const settings = this.plugin.settings;
       const cwd = settings.workingDirectory === "vault" ? vaultPath : settings.workingDirectory;
+      // Use --session-id (not --resume) so a known UUID is *forced*: the CLI
+      // resumes the session if it exists, or creates a new one with that exact
+      // UUID if it doesn't. --resume errors out ("No session ... matched") when
+      // the session file is missing — e.g. on a fresh machine or after the CLI's
+      // local history was cleared — which left users unable to start the terminal.
       const resumeFlag = settings.persistentSession && this.plugin.getMachineSessionId()
-        ? ` --resume=${this.plugin.getMachineSessionId()}`
+        ? ` --session-id=${this.plugin.getMachineSessionId()}`
         : "";
 
       // Obsidian launched from the GUI often inherits a PATH that lacks the npm
@@ -470,8 +475,9 @@ export class CopilotView extends ItemView {
   /**
    * Auto-connect the CLI to Obsidian's IDE server by sending `/ide` once copilot
    * has started and its output has settled (startup/resume finished). The CLI's
-   * native startup auto-connect is skipped when a session is resumed (`--resume`),
-   * so we replicate the user's manual `/ide` — which is not subject to that gate.
+   * native startup auto-connect is skipped when a session is resumed (via
+   * `--session-id`/`--resume`), so we replicate the user's manual `/ide` — which
+   * is not subject to that gate.
    * Debounced on output: fires only after ~2.5s of no output, and never if the
    * user has already started typing.
    */
